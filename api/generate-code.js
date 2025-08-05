@@ -1,4 +1,6 @@
 export default function handler(req, res) {
+  console.log("✅ generate-code API was called!");
+
   const { count = 10, duration = 30, deviceLimit = 1 } = req.query;
 
   const codes = [];
