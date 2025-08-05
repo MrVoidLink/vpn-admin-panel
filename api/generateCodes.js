@@ -3,7 +3,7 @@
 import { faker } from "@faker-js/faker";
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, addDoc, serverTimestamp } from "firebase/firestore";
-import firebaseConfig from "../firebase/firebaseConfig"; // آدرس دقیق فایل config خودتو بذار
+import firebaseConfig from "../src/firebase/firebaseConfig"; // آدرس دقیق فایل config خودتو بذار
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
