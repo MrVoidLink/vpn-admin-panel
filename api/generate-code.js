@@ -7,8 +7,8 @@ export default function handler(req, res) {
     const code = Math.random().toString(36).substring(2, 10).toUpperCase();
     codes.push({
       code,
-      duration,
-      deviceLimit,
+      duration: parseInt(duration),
+      deviceLimit: parseInt(deviceLimit),
     });
   }
 
