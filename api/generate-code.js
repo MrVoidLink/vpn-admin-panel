@@ -1,34 +1,32 @@
-import { useEffect } from "react";
-import axios from "axios";
+export default function handler(req, res) {
+  try {
+    const {
+      count = 10,
+      duration = 30,
+      deviceLimit = 1
+    } = req.query;
 
-const GenerateForm = () => {
-  useEffect(() => {
-    const fetchCodes = async () => {
-      try {
-        console.log("📡 Sending request to API...");
+    console.log("🧩 API Called with:", { count, duration, deviceLimit });
 
-        const response = await axios.get("/api/generate-code", {
-          params: {
-            count: 5,
-            duration: 30,
-            deviceLimit: 2,
-          },
-        });
+    const codes = [];
 
-        console.log("✅ API Response:", response.data);
-      } catch (error) {
-        console.error("❌ API Error:", error);
-      }
-    };
+    for (let i = 0; i < parseInt(count); i++) {
+      const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+      codes.push({
+        code,
+        duration: parseInt(duration),
+        deviceLimit: parseInt(deviceLimit),
+      });
+    }
 
-    fetchCodes();
-  }, []);
-
-  return (
-    <div>
-      <h2>در حال دریافت کد...</h2>
-    </div>
-  );
-};
-
-export default GenerateForm;
+    return res.status(200).json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      generated: codes.length,
+      codes,
+    });
+  } catch (error) {
+    console.error("❌ API Error:", error);
+    return res.status(500).json({ success: false, error: "Internal Server Error" });
+  }
+}
