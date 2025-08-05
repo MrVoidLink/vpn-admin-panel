@@ -1,26 +1,34 @@
-export default function handler(req, res) {
-  const { count = 10, duration = 30, deviceLimit = 1 } = req.query;
+import { useEffect } from "react";
+import axios from "axios";
 
-  console.log("🎯 API CALLED - /generate-code");
-  console.log("🔢 Count:", count);
-  console.log("⏱️ Duration:", duration);
-  console.log("📱 Device Limit:", deviceLimit);
+const GenerateForm = () => {
+  useEffect(() => {
+    const fetchCodes = async () => {
+      try {
+        console.log("📡 Sending request to API...");
 
-  const codes = [];
+        const response = await axios.get("/api/generate-code", {
+          params: {
+            count: 5,
+            duration: 30,
+            deviceLimit: 2,
+          },
+        });
 
-  for (let i = 0; i < parseInt(count); i++) {
-    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-    codes.push({
-      code,
-      duration: parseInt(duration),
-      deviceLimit: parseInt(deviceLimit),
-    });
-  }
+        console.log("✅ API Response:", response.data);
+      } catch (error) {
+        console.error("❌ API Error:", error);
+      }
+    };
 
-  res.setHeader('Content-Type', 'application/json');
-  res.status(200).json({
-    success: true,
-    generated: codes.length,
-    codes,
-  });
-}
+    fetchCodes();
+  }, []);
+
+  return (
+    <div>
+      <h2>در حال دریافت کد...</h2>
+    </div>
+  );
+};
+
+export default GenerateForm;
