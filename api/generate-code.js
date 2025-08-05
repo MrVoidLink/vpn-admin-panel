@@ -1,7 +1,10 @@
 export default function handler(req, res) {
-  console.log("✅ generate-code API was called!");
-
   const { count = 10, duration = 30, deviceLimit = 1 } = req.query;
+
+  console.log("🎯 API CALLED - /generate-code");
+  console.log("🔢 Count:", count);
+  console.log("⏱️ Duration:", duration);
+  console.log("📱 Device Limit:", deviceLimit);
 
   const codes = [];
 
@@ -14,10 +17,10 @@ export default function handler(req, res) {
     });
   }
 
+  res.setHeader('Content-Type', 'application/json');
   res.status(200).json({
     success: true,
-    generatedAt: new Date().toISOString(),
-    count: codes.length,
+    generated: codes.length,
     codes,
   });
 }
