@@ -1,6 +1,6 @@
 // api/generate-code.js
-import { db } from "../firebase-admin.config"; // این فایل رو باید بسازی
-import { Timestamp } from "firebase-admin/firestore";
+import { db } from "./firebase-admin.config.js"; // این فایل رو باید بسازی
+import { db } from "./firebase-admin.config.js";
 
 export default async function handler(req, res) {
   try {
