@@ -9,4 +9,4 @@
     { "source": "/admin/:match*", "destination": "/" },
     { "source": "/:match*", "destination": "/" }
   ]
-}
+} 
