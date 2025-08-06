@@ -8,18 +8,18 @@ import { saveAs } from "file-saver";
 const GenerateCode = () => {
   const [fileHistory, setFileHistory] = useState([]);
 
-  // گرفتن تاریخچه فایل‌ها از سرور هر بار که صفحه لود شد
   useEffect(() => {
-    const fetchHistory = async () => {
-      try {
-        const res = await axios.get("/api/file-history");
-        setFileHistory(res.data.files); // فایل‌ها رو از API بگیر
-      } catch (error) {
-        setFileHistory([]);
-      }
-    };
     fetchHistory();
   }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const res = await axios.get("/api/file-history");
+      setFileHistory(res.data.files);
+    } catch {
+      setFileHistory([]);
+    }
+  };
 
   const handleGenerate = async ({ count, validForDays, deviceLimit, type }) => {
     try {
@@ -32,28 +32,31 @@ const GenerateCode = () => {
       const formattedTime = timestamp.toISOString().replace(/[:.]/g, "-");
       const filename = `codes-${type}-${formattedTime}.xlsx`;
 
-      // تبدیل داده‌ها به اکسل
+      // ساخت اکسل (ستون‌ها انگلیسی)
       const worksheetData = generatedCodes.map((code) => ({
-        "کد اشتراک": code.code,
-        "مدت اعتبار (روز)": code.duration,
-        "تعداد کاربر": code.deviceLimit,
-        "نوع اشتراک": code.type,
-        "تاریخ ایجاد": new Date(code.createdAt._seconds * 1000).toLocaleString("fa-IR"),
-        "استفاده شده؟": code.isUsed ? "بله" : "خیر",
+        "Code": code.code,
+        "Duration (days)": code.duration,
+        "Device Limit": code.deviceLimit,
+        "Type": code.type,
+        "Created At": code.createdAt
+          ? new Date(
+              code.createdAt._seconds
+                ? code.createdAt._seconds * 1000
+                : code.createdAt
+            ).toLocaleString("en-GB")
+          : "",
+        "Used?": code.isUsed ? "Used" : "Unused",
       }));
-
       const worksheet = XLSX.utils.json_to_sheet(worksheetData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Codes");
-
       const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
       const blob = new Blob([excelBuffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       });
-
       saveAs(blob, filename);
 
-      // بعد از ساخت فایل، اطلاعات فایل رو توی Firestore ذخیره کن (یک درخواست POST به /api/file-history)
+      // ذخیره اطلاعات فایل و کدها در Firestore
       await axios.post("/api/file-history", {
         name: filename,
         createdAt: timestamp.toISOString(),
@@ -61,14 +64,13 @@ const GenerateCode = () => {
         validForDays,
         deviceLimit,
         type,
+        codes: generatedCodes, // این خط خیلی مهمه
       });
 
-      // بعد از تولید کد جدید، دوباره تاریخچه رو از سرور بگیر
-      const historyRes = await axios.get("/api/file-history");
-      setFileHistory(historyRes.data.files);
-
+      // رفرش تاریخچه
+      fetchHistory();
     } catch (error) {
-      console.error("❌ خطا در دریافت کد از API:", error);
+      console.error("❌ API Error:", error);
     }
   };
 
