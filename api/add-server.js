@@ -1,4 +1,4 @@
-import { db } from "../../util/firebase-admin"; // مسیر رو با توجه به پروژه‌ات تنظیم کن
+import { db } from "../src/utils/firebase-admin"; // مسیر رو با توجه به پروژه‌ات تنظیم کن
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
