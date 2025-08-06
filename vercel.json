@@ -1,7 +1,7 @@
 {
   "functions": {
     "vite-project/api/**/*.js": {
-      "runtime": "nodejs18.x"
+      "runtime": "nodejs18"
     }
   },
   "rewrites": [
