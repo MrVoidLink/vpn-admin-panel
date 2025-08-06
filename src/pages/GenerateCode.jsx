@@ -8,14 +8,14 @@ import { saveAs } from "file-saver";
 const GenerateCode = () => {
   const [fileHistory, setFileHistory] = useState([]);
 
-  const handleGenerate = async ({ count, validForDays, deviceLimit }) => {
+  const handleGenerate = async ({ count, validForDays, deviceLimit, type }) => {
     try {
-      // ارسال درخواست به API
       const res = await axios.get("/api/generate-code", {
         params: {
           count,
           duration: validForDays,
           deviceLimit,
+          type,
         },
       });
 
@@ -23,12 +23,23 @@ const GenerateCode = () => {
       console.log("✅ کدهای دریافتی:", generatedCodes);
 
       const timestamp = new Date();
-      const filename = `codes-${timestamp.toISOString().replace(/[:.]/g, "-")}.xlsx`;
+      const formattedTime = timestamp.toISOString().replace(/[:.]/g, "-");
+      const filename = `codes-${type}-${formattedTime}.xlsx`;
 
-      // ساخت فایل اکسل از کدهای دریافتی
-      const worksheet = XLSX.utils.json_to_sheet(generatedCodes);
+      // تبدیل داده‌ها به اکسل
+      const worksheetData = generatedCodes.map((code) => ({
+        "کد اشتراک": code.code,
+        "مدت اعتبار (روز)": code.duration,
+        "تعداد کاربر": code.deviceLimit,
+        "نوع اشتراک": code.type,
+        "تاریخ ایجاد": new Date(code.createdAt._seconds * 1000).toLocaleString("fa-IR"),
+        "استفاده شده؟": code.isUsed ? "بله" : "خیر",
+      }));
+
+      const worksheet = XLSX.utils.json_to_sheet(worksheetData);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Codes");
+
       const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
       const blob = new Blob([excelBuffer], {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -36,13 +47,13 @@ const GenerateCode = () => {
 
       saveAs(blob, filename);
 
-      // ثبت در فایل‌ هیستوری
       const newFileRecord = {
         name: filename,
         createdAt: timestamp.toLocaleString("fa-IR"),
         count,
         validForDays,
         deviceLimit,
+        type,
         blob,
       };
 
@@ -54,7 +65,7 @@ const GenerateCode = () => {
 
   return (
     <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Code Generator</h1>
+      <h1 className="text-2xl font-bold mb-6">تولید کد اشتراک</h1>
       <GenerateForm onGenerate={handleGenerate} />
       <FileHistory files={fileHistory} />
     </div>

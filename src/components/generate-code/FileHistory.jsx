@@ -33,9 +33,10 @@ const FileHistory = ({ files }) => {
               <tr>
                 <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">File Name</th>
                 <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Created At</th>
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Type</th> {/* 🔹 جدید */}
                 <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Validity</th>
                 <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Devices</th>
-                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Codes</th> {/* ✅ ستون جدید */}
+                <th className="px-4 py-2 text-left text-sm font-medium text-gray-700">Codes</th>
                 <th className="px-4 py-2 text-center text-sm font-medium text-gray-700">Download</th>
               </tr>
             </thead>
@@ -44,9 +45,12 @@ const FileHistory = ({ files }) => {
                 <tr key={index} className="hover:bg-gray-50">
                   <td className="px-4 py-2 text-sm">{file.name}</td>
                   <td className="px-4 py-2 text-sm">{file.createdAt}</td>
+                  <td className="px-4 py-2 text-sm">
+                    {file.type === "gift" ? "هدیه" : "پریمیوم"}
+                  </td> {/* 🔹 جدید */}
                   <td className="px-4 py-2 text-sm">{file.validForDays} روز</td>
                   <td className="px-4 py-2 text-sm">{file.deviceLimit} کاربره</td>
-                  <td className="px-4 py-2 text-sm">{file.count}</td> {/* ✅ مقدار تعداد کدها */}
+                  <td className="px-4 py-2 text-sm">{file.count}</td>
                   <td className="px-4 py-2 text-center">
                     <button
                       onClick={() => handleDownload(file)}
