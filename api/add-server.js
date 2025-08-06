@@ -1,8 +1,8 @@
-import { db } from "../src/utils/firebase-admin";
+import { db } from "../lib/firebase-admin";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
-    console.log("add-server API is running");
+
     return res.status(405).json({ message: "Method not allowed" });
   }
 
