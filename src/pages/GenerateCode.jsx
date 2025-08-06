@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import GenerateForm from "../components/generate-code/GenerateForm";
 import FileHistory from "../components/generate-code/FileHistory";
@@ -8,20 +8,26 @@ import { saveAs } from "file-saver";
 const GenerateCode = () => {
   const [fileHistory, setFileHistory] = useState([]);
 
+  // گرفتن تاریخچه فایل‌ها از سرور هر بار که صفحه لود شد
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const res = await axios.get("/api/file-history");
+        setFileHistory(res.data.files); // فایل‌ها رو از API بگیر
+      } catch (error) {
+        setFileHistory([]);
+      }
+    };
+    fetchHistory();
+  }, []);
+
   const handleGenerate = async ({ count, validForDays, deviceLimit, type }) => {
     try {
       const res = await axios.get("/api/generate-code", {
-        params: {
-          count,
-          duration: validForDays,
-          deviceLimit,
-          type,
-        },
+        params: { count, duration: validForDays, deviceLimit, type },
       });
 
       const generatedCodes = res.data.codes;
-      console.log("✅ کدهای دریافتی:", generatedCodes);
-
       const timestamp = new Date();
       const formattedTime = timestamp.toISOString().replace(/[:.]/g, "-");
       const filename = `codes-${type}-${formattedTime}.xlsx`;
@@ -47,17 +53,20 @@ const GenerateCode = () => {
 
       saveAs(blob, filename);
 
-      const newFileRecord = {
+      // بعد از ساخت فایل، اطلاعات فایل رو توی Firestore ذخیره کن (یک درخواست POST به /api/file-history)
+      await axios.post("/api/file-history", {
         name: filename,
-        createdAt: timestamp.toLocaleString("fa-IR"),
+        createdAt: timestamp.toISOString(),
         count,
         validForDays,
         deviceLimit,
         type,
-        blob,
-      };
+      });
 
-      setFileHistory((prev) => [newFileRecord, ...prev]);
+      // بعد از تولید کد جدید، دوباره تاریخچه رو از سرور بگیر
+      const historyRes = await axios.get("/api/file-history");
+      setFileHistory(historyRes.data.files);
+
     } catch (error) {
       console.error("❌ خطا در دریافت کد از API:", error);
     }
