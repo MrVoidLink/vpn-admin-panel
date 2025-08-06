@@ -51,8 +51,6 @@ const AddServer = ({ onCancel }) => {
     try {
       const res = await axios.post("/api/add-server", serverData);
       setMessage({ type: "success", text: res.data.message });
-      // اگر می‌خوای بعد از موفقیت فرم پاک بشه، اینجا set ها رو خالی کن
-      // reset form example:
       setServerName("");
       setIpAddress("");
       setPort(1194);
@@ -74,9 +72,13 @@ const AddServer = ({ onCancel }) => {
   };
 
   return (
-    <div className="max-w-3xl mx-auto p-6 bg-white rounded-lg shadow-md">
-      <h1 className="text-2xl font-bold mb-6">Add New Server</h1>
-      <form onSubmit={handleSubmit} className="space-y-5">
+    <div className="h-screen flex justify-center items-center bg-gray-50 p-4">
+      <form
+        onSubmit={handleSubmit}
+        className="bg-white rounded-lg shadow-md p-6 w-full max-w-3xl max-h-[90vh] overflow-y-auto space-y-5"
+      >
+        <h1 className="text-2xl font-bold mb-6">Add New Server</h1>
+
         {/* Server Name */}
         <div>
           <label className="block mb-1 font-medium">Server Name *</label>
