@@ -1,4 +1,4 @@
-import { db } from "../src/utils/firebase-admin"; // مسیر رو با توجه به پروژه‌ات تنظیم کن
+import { db } from "../utils/firebase-admin";
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -7,7 +7,7 @@ export default async function handler(req, res) {
 
   const serverData = req.body;
 
-  // اعتبارسنجی ساده (می‌تونی بیشتر کنی)
+  // اعتبارسنجی اولیه
   if (
     !serverData.serverName ||
     !serverData.ipAddress ||
@@ -23,9 +23,9 @@ export default async function handler(req, res) {
 
   try {
     await db.collection("servers").add(serverData);
-    res.status(200).json({ message: "Server added successfully" });
+    return res.status(200).json({ message: "Server added successfully" });
   } catch (error) {
     console.error("Error adding server:", error);
-    res.status(500).json({ message: "Failed to add server", error: error.message });
+    return res.status(500).json({ message: "Failed to add server", error: error.message });
   }
 }
