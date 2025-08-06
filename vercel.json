@@ -7,6 +7,7 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/vite-project/api/$1" },
     { "source": "/admin/:match*", "destination": "/" },
-    { "source": "/:match*", "destination": "/" }
+    { "source": "/:match*", "destination": "/" },
+    { "source": "/(.*)", "destination": "/" }
   ]
-} 
+}
