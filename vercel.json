@@ -1,13 +1,14 @@
 {
+  "version": 2,
   "functions": {
     "api/**/*.js": {
-      "runtime": "@vercel/node@18"
+      "runtime": "vercel/node@20.x"
     }
   },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/admin/:match*", "destination": "/" },
-    { "source": "/:match*", "destination": "/" },
-    { "source": "/(.*)", "destination": "/" }
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "/bin/www"
+    }
   ]
 }
