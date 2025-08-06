@@ -12,72 +12,75 @@ const GenerateForm = ({ onGenerate }) => {
   };
 
   return (
-    <form onSubmit={handleSubmit} className="bg-white p-6 rounded-lg shadow-md space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      className="bg-white p-6 rounded-xl shadow-md space-y-4"
+    >
       <div className="flex flex-col md:flex-row gap-4 items-center flex-wrap">
 
-        {/* نوع اشتراک */}
+        {/* Subscription Type */}
         <div className="flex-1 min-w-[200px]">
-          <label className="block mb-1 font-medium">نوع اشتراک</label>
+          <label className="block mb-1 font-medium text-gray-700">Subscription Type</label>
           <select
             value={type}
             onChange={(e) => setType(e.target.value)}
-            className="w-full border border-gray-300 rounded px-3 py-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
           >
-            <option value="premium">پریمیوم (پولی)</option>
-            <option value="gift">هدیه (محدود)</option>
+            <option value="premium">Premium (Paid)</option>
+            <option value="gift">Gift (Limited)</option>
           </select>
         </div>
 
-        {/* تعداد کد */}
+        {/* Code Count */}
         <div className="flex-1 min-w-[200px]">
-          <label className="block mb-1 font-medium">تعداد کد</label>
+          <label className="block mb-1 font-medium text-gray-700">Code Count</label>
           <input
             type="number"
             value={count}
             onChange={(e) => setCount(Number(e.target.value))}
             min={1}
             required
-            className="w-full border border-gray-300 rounded px-3 py-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
           />
         </div>
 
-        {/* مدت اعتبار */}
+        {/* Validity (Days) */}
         <div className="flex-1 min-w-[200px]">
-          <label className="block mb-1 font-medium">مدت اعتبار (روز)</label>
+          <label className="block mb-1 font-medium text-gray-700">Validity (days)</label>
           <select
             value={validForDays}
             onChange={(e) => setValidForDays(Number(e.target.value))}
-            className="w-full border border-gray-300 rounded px-3 py-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
           >
-            <option value={15}>15 روزه</option>
-            <option value={30}>30 روزه</option>
-            <option value={60}>60 روزه</option>
-            <option value={90}>90 روزه</option>
-            <option value={180}>6 ماهه</option>
-            <option value={365}>1 ساله</option>
+            <option value={15}>15 days</option>
+            <option value={30}>30 days</option>
+            <option value={60}>60 days</option>
+            <option value={90}>90 days</option>
+            <option value={180}>6 months</option>
+            <option value={365}>1 year</option>
           </select>
         </div>
 
-        {/* تعداد کاربر */}
+        {/* Device Limit */}
         <div className="flex-1 min-w-[200px]">
-          <label className="block mb-1 font-medium">تعداد کاربر</label>
+          <label className="block mb-1 font-medium text-gray-700">Device Limit</label>
           <select
             value={deviceLimit}
             onChange={(e) => setDeviceLimit(Number(e.target.value))}
-            className="w-full border border-gray-300 rounded px-3 py-2"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
           >
-            <option value={1}>تک کاربره</option>
-            <option value={2}>دو کاربره</option>
-            <option value={3}>سه کاربره</option>
+            <option value={1}>Single user</option>
+            <option value={2}>Two users</option>
+            <option value={3}>Three users</option>
           </select>
         </div>
 
-        {/* دکمه */}
+        {/* Button */}
         <button
           type="submit"
-          className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700"
+          className="bg-blue-600 text-white px-6 py-2 rounded-lg font-semibold shadow hover:bg-blue-700 transition mt-6 md:mt-0"
         >
-          تولید کد
+          Generate Code
         </button>
       </div>
     </form>

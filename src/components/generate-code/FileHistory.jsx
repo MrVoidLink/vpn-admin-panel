@@ -16,7 +16,7 @@ const FileHistory = ({ files }) => {
   const handleDownload = (file) => {
     try {
       if (!file.codes || !Array.isArray(file.codes)) {
-        alert("هیچ کدی برای این فایل ثبت نشده!");
+        alert("No codes registered for this file!");
         return;
       }
       const worksheetData = file.codes.map((code) => ({
@@ -29,7 +29,7 @@ const FileHistory = ({ files }) => {
               code.createdAt._seconds
                 ? code.createdAt._seconds * 1000
                 : code.createdAt
-            ).toLocaleString("fa-IR")
+            ).toLocaleString("en-GB")
           : "",
         "Used?": code.isUsed ? "Used" : "Unused",
       }));
@@ -48,39 +48,44 @@ const FileHistory = ({ files }) => {
 
   return (
     <div>
-      <h2 className="text-lg font-semibold mb-4">تاریخچه فایل‌های اکسل</h2>
-      <table className="min-w-full bg-white rounded-xl shadow">
+      <h2 className="text-lg font-semibold mb-4 text-gray-700">Excel Files History</h2>
+      <table className="min-w-full bg-white rounded-xl shadow overflow-hidden">
         <thead>
-          <tr>
-            <th>Filename</th>
-            <th>Date</th>
-            <th>Count</th>
-            <th>Type</th>
-            <th>Download</th>
+          <tr className="bg-gray-100">
+            <th className="py-2 px-3 text-left">Filename</th>
+            <th className="py-2 px-3 text-left">Date</th>
+            <th className="py-2 px-3 text-left">Count</th>
+            <th className="py-2 px-3 text-left">Type</th>
+            <th className="py-2 px-3 text-left">Download</th>
           </tr>
         </thead>
         <tbody>
           {paginatedFiles && paginatedFiles.length > 0 ? (
             paginatedFiles.map((file, idx) => (
-              <tr key={idx}>
-                <td>{file.name}</td>
-                <td>{file.createdAt ? new Date(file.createdAt).toLocaleString("fa-IR") : ""}</td>
-                <td>{file.count}</td>
-                <td>{file.type}</td>
-                <td>
+              <tr
+                key={idx}
+                className="hover:bg-gray-50 transition"
+              >
+                <td className="py-2 px-3">{file.name}</td>
+                <td className="py-2 px-3">
+                  {file.createdAt ? new Date(file.createdAt).toLocaleString("en-GB") : ""}
+                </td>
+                <td className="py-2 px-3">{file.count}</td>
+                <td className="py-2 px-3 capitalize">{file.type}</td>
+                <td className="py-2 px-3">
                   <button
-                    className="px-2 py-1 bg-blue-500 text-white rounded-lg"
+                    className="px-3 py-1 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition"
                     onClick={() => handleDownload(file)}
                   >
-                    دانلود
+                    Download
                   </button>
                 </td>
               </tr>
             ))
           ) : (
             <tr>
-              <td colSpan={5} className="text-center">
-                هیچ فایلی ثبت نشده!
+              <td colSpan={5} className="text-center py-4 text-gray-400">
+                No files found!
               </td>
             </tr>
           )}
@@ -93,14 +98,18 @@ const FileHistory = ({ files }) => {
           <button
             disabled={currentPage === 1}
             onClick={() => setCurrentPage((p) => Math.max(p - 1, 1))}
-            className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50"
+            className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 font-medium"
           >
-            قبلی
+            Previous
           </button>
           {Array.from({ length: totalPages }, (_, idx) => (
             <button
               key={idx}
-              className={`px-3 py-1 rounded ${currentPage === idx + 1 ? "bg-blue-500 text-white" : "bg-gray-100"}`}
+              className={`px-3 py-1 rounded font-medium ${
+                currentPage === idx + 1
+                  ? "bg-blue-600 text-white"
+                  : "bg-gray-100 text-gray-800"
+              }`}
               onClick={() => setCurrentPage(idx + 1)}
             >
               {idx + 1}
@@ -109,9 +118,9 @@ const FileHistory = ({ files }) => {
           <button
             disabled={currentPage === totalPages}
             onClick={() => setCurrentPage((p) => Math.min(p + 1, totalPages))}
-            className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50"
+            className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 font-medium"
           >
-            بعدی
+            Next
           </button>
         </div>
       )}

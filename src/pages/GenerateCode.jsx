@@ -32,7 +32,7 @@ const GenerateCode = () => {
       const formattedTime = timestamp.toISOString().replace(/[:.]/g, "-");
       const filename = `codes-${type}-${formattedTime}.xlsx`;
 
-      // ساخت اکسل (ستون‌ها انگلیسی)
+      // Generate Excel file (columns in English)
       const worksheetData = generatedCodes.map((code) => ({
         "Code": code.code,
         "Duration (days)": code.duration,
@@ -56,7 +56,7 @@ const GenerateCode = () => {
       });
       saveAs(blob, filename);
 
-      // ذخیره اطلاعات فایل و کدها در Firestore
+      // Save file and codes info to Firestore
       await axios.post("/api/file-history", {
         name: filename,
         createdAt: timestamp.toISOString(),
@@ -64,10 +64,9 @@ const GenerateCode = () => {
         validForDays,
         deviceLimit,
         type,
-        codes: generatedCodes, // این خط خیلی مهمه
+        codes: generatedCodes, // very important
       });
 
-      // رفرش تاریخچه
       fetchHistory();
     } catch (error) {
       console.error("❌ API Error:", error);
@@ -75,10 +74,16 @@ const GenerateCode = () => {
   };
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">تولید کد اشتراک</h1>
-      <GenerateForm onGenerate={handleGenerate} />
-      <FileHistory files={fileHistory} />
+    <div className="p-6 min-h-screen bg-gray-50">
+      <h1 className="text-3xl font-extrabold mb-8 text-gray-800 text-center tracking-tight drop-shadow-sm">
+        Generate Subscription Code
+      </h1>
+      <div className="mb-10">
+        <GenerateForm onGenerate={handleGenerate} />
+      </div>
+      <div>
+        <FileHistory files={fileHistory} />
+      </div>
     </div>
   );
 };
