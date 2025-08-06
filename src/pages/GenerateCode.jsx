@@ -1,51 +1,55 @@
 import React, { useState } from "react";
+import axios from "axios";
 import GenerateForm from "../components/generate-code/GenerateForm";
 import FileHistory from "../components/generate-code/FileHistory";
 import * as XLSX from "xlsx";
-import { saveAs } from "file-saver"; // ✅ اضافه شد
+import { saveAs } from "file-saver";
 
 const GenerateCode = () => {
   const [fileHistory, setFileHistory] = useState([]);
 
-  const generateCodeString = () => {
-    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    const randomLetters = Array.from({ length: 4 }, () => letters[Math.floor(Math.random() * letters.length)]).join("");
-    const randomNumbers = Math.floor(1000 + Math.random() * 9000);
-    return `${randomLetters}-${randomNumbers}`;
-  };
+  const handleGenerate = async ({ count, validForDays, deviceLimit }) => {
+    try {
+      // ارسال درخواست به API
+      const res = await axios.get("/api/generate-code", {
+        params: {
+          count,
+          duration: validForDays,
+          deviceLimit,
+        },
+      });
 
-  const handleGenerate = ({ count, validForDays, deviceLimit }) => {
-    const newCodes = Array.from({ length: count }, () => ({
-      code: generateCodeString(),
-      validForDays,
-      deviceLimit,
-    }));
+      const generatedCodes = res.data.codes;
+      console.log("✅ کدهای دریافتی:", generatedCodes);
 
-    const timestamp = new Date();
-    const filename = `codes-${timestamp.toISOString().replace(/[:.]/g, "-")}.xlsx`;
+      const timestamp = new Date();
+      const filename = `codes-${timestamp.toISOString().replace(/[:.]/g, "-")}.xlsx`;
 
-    // ساخت فایل اکسل
-    const worksheet = XLSX.utils.json_to_sheet(newCodes);
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Codes");
-    const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-    const blob = new Blob([excelBuffer], {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
+      // ساخت فایل اکسل از کدهای دریافتی
+      const worksheet = XLSX.utils.json_to_sheet(generatedCodes);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Codes");
+      const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
+      const blob = new Blob([excelBuffer], {
+        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      });
 
-    saveAs(blob, filename); // ✅ اضافه شد: دانلود فایل
+      saveAs(blob, filename);
 
-    // ثبت در فایل‌ هیستوری با blob ذخیره‌شده
-    const newFileRecord = {
-      name: filename,
-      createdAt: timestamp.toLocaleString("fa-IR"),
-      count,
-      validForDays,
-      deviceLimit,
-      blob,
-    };
+      // ثبت در فایل‌ هیستوری
+      const newFileRecord = {
+        name: filename,
+        createdAt: timestamp.toLocaleString("fa-IR"),
+        count,
+        validForDays,
+        deviceLimit,
+        blob,
+      };
 
-    setFileHistory((prev) => [newFileRecord, ...prev]);
+      setFileHistory((prev) => [newFileRecord, ...prev]);
+    } catch (error) {
+      console.error("❌ خطا در دریافت کد از API:", error);
+    }
   };
 
   return (
