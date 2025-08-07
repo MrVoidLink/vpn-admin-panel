@@ -9,6 +9,8 @@ const AddServer = ({ onCancel }) => {
   const [serverType, setServerType] = useState("free");
   const [maxConnections, setMaxConnections] = useState(10);
   const [location, setLocation] = useState("");
+  const [country, setCountry] = useState(""); // جدید
+  const [configFileUrl, setConfigFileUrl] = useState(""); // جدید
   const [status, setStatus] = useState("active");
   const [description, setDescription] = useState("");
 
@@ -24,6 +26,7 @@ const AddServer = ({ onCancel }) => {
     if (ipAddress && !ipRegex.test(ipAddress)) newErrors.ipAddress = "Invalid IP address format.";
     if (!port || port <= 0 || port > 65535) newErrors.port = "Port must be between 1 and 65535.";
     if (!location.trim()) newErrors.location = "Location is required.";
+    if (!country.trim()) newErrors.country = "Country is required."; // جدید
     if (!maxConnections || maxConnections <= 0) newErrors.maxConnections = "Max connections must be positive.";
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -44,6 +47,8 @@ const AddServer = ({ onCancel }) => {
       serverType,
       maxConnections,
       location,
+      country,        // جدید
+      configFileUrl,  // جدید
       status,
       description,
     };
@@ -58,6 +63,8 @@ const AddServer = ({ onCancel }) => {
       setServerType("free");
       setMaxConnections(10);
       setLocation("");
+      setCountry("");        // جدید
+      setConfigFileUrl("");  // جدید
       setStatus("active");
       setDescription("");
       setErrors({});
@@ -185,6 +192,34 @@ const AddServer = ({ onCancel }) => {
             disabled={loading}
           />
           {errors.location && <p className="text-red-500 text-sm mt-1">{errors.location}</p>}
+        </div>
+
+        {/* Country */}
+        <div>
+          <label className="block mb-1 font-medium">Country *</label>
+          <input
+            type="text"
+            value={country}
+            onChange={(e) => setCountry(e.target.value)}
+            className={`w-full border px-3 py-2 rounded ${
+              errors.country ? "border-red-500" : "border-gray-300"
+            }`}
+            disabled={loading}
+          />
+          {errors.country && <p className="text-red-500 text-sm mt-1">{errors.country}</p>}
+        </div>
+
+        {/* Config File URL */}
+        <div>
+          <label className="block mb-1 font-medium">Config File URL</label>
+          <input
+            type="text"
+            value={configFileUrl}
+            onChange={(e) => setConfigFileUrl(e.target.value)}
+            placeholder="https://your-server.com/vpn-config.ovpn"
+            className="w-full border border-gray-300 rounded px-3 py-2"
+            disabled={loading}
+          />
         </div>
 
         {/* Status */}

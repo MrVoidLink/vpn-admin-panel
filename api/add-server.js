@@ -7,7 +7,7 @@ export default async function handler(req, res) {
 
   const serverData = req.body;
 
-  // اعتبارسنجی اولیه
+  // اعتبارسنجی اولیه (اضافه شدن فیلدهای جدید)
   if (
     !serverData.serverName ||
     !serverData.ipAddress ||
@@ -16,13 +16,17 @@ export default async function handler(req, res) {
     !serverData.serverType ||
     !serverData.maxConnections ||
     !serverData.location ||
+    !serverData.country ||            // جدید
     !serverData.status
   ) {
     return res.status(400).json({ message: "Missing required fields" });
   }
 
   try {
-    await db.collection("servers").add(serverData);
+    await db.collection("servers").add({
+      ...serverData,
+      createdAt: new Date(),
+    });
     return res.status(200).json({ message: "Server added successfully" });
   } catch (error) {
     console.error("Error adding server:", error);
