@@ -8,6 +8,7 @@ import UserDetail from "./components/users/UserDetail";
 import GenerateCode from "./pages/GenerateCode";
 import SendNotification from "./pages/SendNotification"; // ✅ اضافه شد
 import AddServer from "./pages/AddServer"; // ✅ اضافه شده
+import ServerManagement from "./pages/ServerManagement"; // ✅ ایمپورت جدید
 
 import ProtectedRoute from "./components/ProtectedRoute";
 
@@ -31,8 +32,9 @@ function App() {
           <Route path="users" element={<Users />} />
           <Route path="users/:id" element={<UserDetail />} />
           <Route path="generate-code" element={<GenerateCode />} />
-          <Route path="send-notification" element={<SendNotification />} /> {/* ✅ روت جدید */}
-          <Route path="add-server" element={<AddServer />} /> {/* ✅ روت اضافه شده */}
+          <Route path="send-notification" element={<SendNotification />} />
+          <Route path="add-server" element={<AddServer />} />
+          <Route path="servers" element={<ServerManagement />} /> {/* ✅ روت جدید برای مدیریت سرورها */}
         </Route>
 
         {/* مسیر پیش‌فرض */}

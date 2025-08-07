@@ -17,8 +17,9 @@ const menuItems = [
   { label: "Users", icon: <FaUser />, path: "/admin/users" },
   { label: "Generate Code", icon: <FaKey />, path: "/admin/generate-code" },
   { label: "Add Server", icon: <FaServer />, path: "/admin/add-server" },
+  { label: "Server Management", icon: <FaServer />, path: "/admin/servers" }, // 👈 تغییر داده شد و بعد Add Server
   { label: "Subscription Plans", icon: <FaListAlt />, path: "/admin/subscription-plans" },
-  { label: "Send Notification", icon: <FaBell />, path: "/admin/send-notification" }, // ✅ اضافه شد
+  { label: "Send Notification", icon: <FaBell />, path: "/admin/send-notification" },
   { label: "Settings", icon: <FaCog />, path: "/admin/settings" },
 ];
 
