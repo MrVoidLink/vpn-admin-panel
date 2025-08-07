@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { collection, getDocs } from "firebase/firestore";
-import { db } from "../../lib/firebase";
+import { db } from "../../lib/firebase.js";
 import { FaServer, FaSyncAlt } from "react-icons/fa";
 
 export default function ServerManagement() {
