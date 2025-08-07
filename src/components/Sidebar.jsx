@@ -17,7 +17,6 @@ const menuItems = [
   { label: "Generate Code", icon: <FaKey />, path: "/admin/generate-code" },
   { label: "Add Server", icon: <FaServer />, path: "/admin/add-server" },
   { label: "Server Management", icon: <FaServer />, path: "/admin/servers" },
-  // { label: "Subscription Plans", icon: <FaListAlt />, path: "/admin/subscription-plans" }, // ❌ حذف شد
   { label: "Send Notification", icon: <FaBell />, path: "/admin/send-notification" },
   { label: "Settings", icon: <FaCog />, path: "/admin/settings" },
 ];
@@ -32,7 +31,7 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-64 h-screen bg-white border-r shadow-md p-5 flex flex-col">
+    <aside className="fixed top-0 left-0 w-64 h-screen bg-white border-r shadow-md p-5 flex flex-col overflow-y-auto">
       <h2 className="text-xl font-bold mb-6 text-gray-800">Admin Panel</h2>
       <nav className="space-y-2 flex-1">
         {menuItems.map((item) => (
@@ -61,4 +60,3 @@ export default function Sidebar() {
     </aside>
   );
 }
- 

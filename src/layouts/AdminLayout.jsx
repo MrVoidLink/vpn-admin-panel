@@ -4,18 +4,13 @@ import { Outlet } from "react-router-dom";
 
 const AdminLayout = () => {
   return (
-    <div className="flex flex-col min-h-screen">
-
-      {/* بدنه اصلی */}
-      <div className="flex flex-1">
-        {/* سایدبار در سمت چپ */}
+    <div className="flex h-screen overflow-hidden">
+      <aside className="fixed top-0 left-0 w-64 h-screen bg-white border-r shadow-md overflow-y-auto">
         <Sidebar />
-
-        {/* محتوای متغیر صفحات */}
-        <main className="flex-1 bg-gray-100 p-6">
-          <Outlet />
-        </main>
-      </div>
+      </aside>
+      <main className="ml-64 flex-1 overflow-auto p-6 bg-gray-100">
+        <Outlet />
+      </main>
     </div>
   );
 };

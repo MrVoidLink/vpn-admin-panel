@@ -1,3 +1,12 @@
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* اینجا overflow را بسته‌ایم */
+  box-sizing: border-box;
+}
+
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
