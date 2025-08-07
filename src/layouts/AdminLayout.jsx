@@ -1,13 +1,10 @@
 import React from "react";
-import Header from "../components/Header";
 import Sidebar from "../components/Sidebar";
 import { Outlet } from "react-router-dom";
 
 const AdminLayout = () => {
   return (
     <div className="flex flex-col min-h-screen">
-      {/* هدر بالای پنل */}
-      <Header />
 
       {/* بدنه اصلی */}
       <div className="flex flex-1">
