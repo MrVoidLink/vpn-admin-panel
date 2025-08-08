@@ -11,7 +11,6 @@ export default function ServerManagement() {
   const [selectedServer, setSelectedServer] = useState(null);
   const [editServer, setEditServer] = useState(null);
 
-  // گرفتن سرورها از دیتابیس
   const fetchServers = async () => {
     setLoading(true);
     try {
@@ -31,22 +30,19 @@ export default function ServerManagement() {
     fetchServers();
   }, []);
 
-  // حذف سرور
   const handleDeleteServer = async (serverId) => {
     const confirm = window.confirm("Are you sure you want to delete this server?");
     if (!confirm) return;
     try {
       await deleteDoc(doc(db, "servers", serverId));
       setServers(servers.filter((s) => s.id !== serverId));
-      // اگر سرور حذف‌شده انتخاب شده بود، کارت رو هم ببند
-      if (selectedServer && selectedServer.id === serverId) setSelectedServer(null);
-      if (editServer && editServer.id === serverId) setEditServer(null);
+      if (selectedServer?.id === serverId) setSelectedServer(null);
+      if (editServer?.id === serverId) setEditServer(null);
     } catch (error) {
       alert("Failed to delete server: " + error.message);
     }
   };
 
-  // ویرایش سرور
   const handleEditServer = async (updatedServer) => {
     try {
       const ref = doc(db, "servers", updatedServer.id);
@@ -60,8 +56,9 @@ export default function ServerManagement() {
   };
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
+    <section className="w-full space-y-6">
+      {/* هدر */}
+      <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <FaServer className="text-blue-600 text-3xl" />
           <div>
@@ -81,11 +78,12 @@ export default function ServerManagement() {
         </button>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="min-w-full bg-white rounded-2xl shadow-xl border-separate border-spacing-0">
-          <thead>
-            <tr className="bg-gray-100">
-              <th className="p-4 text-left rounded-tl-2xl">Name</th>
+      {/* جدول */}
+      <div className="overflow-x-auto bg-white rounded-xl shadow-md">
+        <table className="min-w-full border-separate border-spacing-0">
+          <thead className="bg-gray-100 text-sm text-gray-700">
+            <tr>
+              <th className="p-4 text-left rounded-tl-xl">Name</th>
               <th className="p-4 text-left">IP</th>
               <th className="p-4 text-left">Port</th>
               <th className="p-4 text-left">Protocol</th>
@@ -94,7 +92,7 @@ export default function ServerManagement() {
               <th className="p-4 text-left">Country</th>
               <th className="p-4 text-left">Status</th>
               <th className="p-4 text-left">Config</th>
-              <th className="p-4 text-left rounded-tr-2xl">Actions</th>
+              <th className="p-4 text-left rounded-tr-xl">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -106,10 +104,7 @@ export default function ServerManagement() {
               </tr>
             ) : (
               servers.map((srv) => (
-                <tr
-                  key={srv.id}
-                  className="border-t hover:bg-blue-50 transition-all"
-                >
+                <tr key={srv.id} className="border-t hover:bg-blue-50 transition">
                   <td className="p-4 font-medium flex items-center gap-2">
                     <FaServer className="text-gray-400" /> {srv.serverName}
                   </td>
@@ -121,10 +116,10 @@ export default function ServerManagement() {
                   <td className="p-4">{srv.country}</td>
                   <td className="p-4">
                     <span
-                      className={`px-2 py-1 rounded-full text-xs font-bold
-                        ${srv.status === "active"
-                        ? "bg-green-100 text-green-700"
-                        : "bg-gray-200 text-gray-600"
+                      className={`px-2 py-1 rounded-full text-xs font-bold ${
+                        srv.status === "active"
+                          ? "bg-green-100 text-green-700"
+                          : "bg-gray-200 text-gray-600"
                       }`}
                     >
                       {srv.status}
@@ -180,7 +175,7 @@ export default function ServerManagement() {
         </table>
       </div>
 
-      {/* نمایش کارت جزییات یا فرم ویرایش */}
+      {/* جزییات یا فرم ویرایش */}
       {selectedServer && (
         <ServerDetailsCard
           server={selectedServer}
@@ -194,6 +189,6 @@ export default function ServerManagement() {
           onCancel={() => setEditServer(null)}
         />
       )}
-    </div>
+    </section>
   );
 }

@@ -1,11 +1,12 @@
 html, body, #root {
-  height: 100%;
+  height: 100vh;
   margin: 0;
   padding: 0;
-  overflow: hidden; /* اینجا overflow را بسته‌ایم */
   box-sizing: border-box;
+  overflow-x: hidden; /* فقط اسکرول افقی بسته */
+  /* دقت کن که overflow-y اصلا تنظیم نشه */
+  font-family: system-ui, sans-serif;
 }
-
 
 @tailwind base;
 @tailwind components;

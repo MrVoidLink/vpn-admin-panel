@@ -9,7 +9,6 @@ import GenerateCode from "./pages/GenerateCode";
 import SendNotification from "./pages/SendNotification"; // ✅ اضافه شد
 import AddServer from "./pages/AddServer"; // ✅ اضافه شده
 import ServerManagement from "./pages/ServerManagement"; // ✅ ایمپورت جدید
-
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function App() {
@@ -34,7 +33,7 @@ function App() {
           <Route path="generate-code" element={<GenerateCode />} />
           <Route path="send-notification" element={<SendNotification />} />
           <Route path="add-server" element={<AddServer />} />
-          <Route path="servers" element={<ServerManagement />} /> {/* ✅ روت جدید برای مدیریت سرورها */}
+          <Route path="server-management" element={<ServerManagement />} />
         </Route>
 
         {/* مسیر پیش‌فرض */}

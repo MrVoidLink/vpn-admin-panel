@@ -8,7 +8,6 @@ import {
   FaSignOutAlt,
   FaBell,
 } from "react-icons/fa";
-
 import { getAuth, signOut } from "firebase/auth";
 
 const menuItems = [
@@ -16,7 +15,7 @@ const menuItems = [
   { label: "Users", icon: <FaUser />, path: "/admin/users" },
   { label: "Generate Code", icon: <FaKey />, path: "/admin/generate-code" },
   { label: "Add Server", icon: <FaServer />, path: "/admin/add-server" },
-  { label: "Server Management", icon: <FaServer />, path: "/admin/servers" },
+  { label: "Server Management", icon: <FaServer />, path: "/admin/server-management" },
   { label: "Send Notification", icon: <FaBell />, path: "/admin/send-notification" },
   { label: "Settings", icon: <FaCog />, path: "/admin/settings" },
 ];
@@ -30,33 +29,44 @@ export default function Sidebar() {
     navigate("/login");
   };
 
+  const handleMobileNav = () => {
+    if (window.innerWidth < 768) {
+      document.dispatchEvent(new CustomEvent("closeSidebar"));
+    }
+  };
+
   return (
-    <aside className="fixed top-0 left-0 w-64 h-screen bg-white border-r shadow-md p-5 flex flex-col overflow-y-auto">
-      <h2 className="text-xl font-bold mb-6 text-gray-800">Admin Panel</h2>
-      <nav className="space-y-2 flex-1">
+    <nav className="flex flex-col h-full text-gray-700">
+      <h2 className="text-2xl font-bold mb-8 text-gray-900">Admin Panel</h2>
+      <ul className="flex-1 space-y-2">
         {menuItems.map((item) => (
-          <NavLink
-            key={item.label}
-            to={item.path}
-            className={({ isActive }) =>
-              `flex items-center space-x-2 px-3 py-2 rounded-md text-sm font-medium ${
-                isActive ? "bg-gray-100 text-blue-600" : "text-gray-700 hover:bg-gray-50"
-              }`
-            }
-          >
-            <span>{item.icon}</span>
-            <span>{item.label}</span>
-          </NavLink>
+          <li key={item.label}>
+            <NavLink
+              to={item.path}
+              onClick={handleMobileNav}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-4 py-2 rounded-md text-base font-medium transition
+                 ${
+                   isActive
+                     ? "bg-blue-100 text-blue-700 font-semibold"
+                     : "hover:bg-gray-100 text-gray-700"
+                 }`
+              }
+            >
+              <span className="text-lg">{item.icon}</span>
+              <span className="truncate">{item.label}</span>
+            </NavLink>
+          </li>
         ))}
-      </nav>
+      </ul>
 
       <button
         onClick={handleLogout}
-        className="mt-6 flex items-center space-x-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md"
+        className="mt-4 flex items-center gap-2 px-4 py-2 rounded-md bg-gray-100 hover:bg-gray-200 transition text-gray-700"
       >
         <FaSignOutAlt />
         <span>Logout</span>
       </button>
-    </aside>
+    </nav>
   );
 }
