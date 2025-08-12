@@ -125,35 +125,98 @@ const UserDetail = () => {
           </div>
           <div className="flex items-center gap-2">
             {import.meta.env.DEV && user && (
-              <button
-                onClick={async () => {
-                  const codeId = prompt("Enter codeId to apply:");
-                  if (!codeId) return;
-                  try {
-                    const r = await fetch(`/api/apply-token`, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ uid: user.uid, codeId }),
-                    });
+              <>
+                {/* Apply Token */}
+                <button
+                  onClick={async () => {
+                    const codeId = prompt("Enter codeId to apply:");
+                    if (!codeId) return;
+                    try {
+                      const r = await fetch(`/api/apply-token`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ uid: user.uid, codeId }),
+                      });
 
-                    let data = null;
-                    try { data = await r.json(); } catch (_) {}
+                      let data = null;
+                      try { data = await r.json(); } catch (_) {}
 
-                    if (!r.ok) {
-                      alert(`Failed: ${data?.error || r.status}`);
-                      return;
+                      if (!r.ok) {
+                        alert(`Failed: ${data?.error || r.status}`);
+                        return;
+                      }
+                      alert("Applied!");
+                      window.location.reload();
+                    } catch (e) {
+                      alert("Request failed");
+                      console.error(e);
                     }
-                    alert("Applied!");
-                    window.location.reload();
-                  } catch (e) {
-                    alert("Request failed");
-                    console.error(e);
-                  }
-                }}
-                className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
-              >
-                Apply Token (DEV)
-              </button>
+                  }}
+                  className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+                >
+                  Apply Token (DEV)
+                </button>
+
+                {/* Claim device */}
+                <button
+                  onClick={async () => {
+                    if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
+                    const deviceId = prompt("Enter deviceId to CLAIM:");
+                    if (!deviceId) return;
+                    const platform = user.platform || "android";
+                    const model = user.deviceModel || "";
+                    const appVersion = user.appVersion || "";
+                    try {
+                      const r = await fetch("/api/claim-device", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          uid: user.uid,
+                          codeId: user.tokenId,
+                          deviceId,
+                          deviceInfo: { platform, model, appVersion },
+                        }),
+                      });
+                      let data = null; try { data = await r.json(); } catch(_) {}
+                      if (!r.ok) return alert(`CLAIM failed: ${data?.error || r.status}`);
+                      alert("CLAIM ok");
+                    } catch (e) {
+                      console.error(e); alert("CLAIM request failed");
+                    }
+                  }}
+                  className="text-sm bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700"
+                >
+                  Claim Device (DEV)
+                </button>
+
+                {/* Release device */}
+                <button
+                  onClick={async () => {
+                    if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
+                    const deviceId = prompt("Enter deviceId to RELEASE:");
+                    if (!deviceId) return;
+                    try {
+                      const r = await fetch("/api/release-device", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          uid: user.uid,
+                          codeId: user.tokenId,
+                          deviceId,
+                        }),
+                      });
+                      let data = null; try { data = await r.json(); } catch(_) {}
+                      if (!r.ok) return alert(`RELEASE failed: ${data?.error || r.status}`);
+                      alert("RELEASE ok");
+                    } catch (e) {
+                      console.error(e); alert("RELEASE request failed");
+                    }
+                  }}
+                  className="text-sm bg-amber-600 text-white px-3 py-1 rounded hover:bg-amber-700"
+                >
+                  Release Device (DEV)
+                </button>
+              </>
             )}
             <button
               onClick={() => navigate("/admin/users")}
