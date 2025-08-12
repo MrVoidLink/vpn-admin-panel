@@ -1,111 +1,78 @@
 // api/admin-reset-user.js
-import { db } from "./firebase-admin.config.js";
-import admin from "firebase-admin";
+import 'dotenv/config';
+import admin from 'firebase-admin';
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  });
+}
+const db = admin.firestore();
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") {
-      return res.status(405).json({ error: "Method Not Allowed" });
-    }
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const { uid } = req.body || {};
+    if (!uid) return res.status(400).json({ error: 'uid is required' });
 
-    // body
-    let body = req.body;
-    if (!body) { try { body = await req.json?.(); } catch (_) {} }
-    const { uid, alsoRemoveRedemption = true } = body || {};
-    if (!uid) return res.status(400).json({ error: "uid is required" });
-
-    const userRef = db.collection("users").doc(uid);
+    const userRef = db.collection('users').doc(uid);
     const userSnap = await userRef.get();
-    if (!userSnap.exists) return res.status(404).json({ error: "USER_NOT_FOUND" });
+    if (!userSnap.exists) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
     const user = userSnap.data() || {};
     const codeId = user.tokenId;
+    const now = admin.firestore.Timestamp.now();
 
-    // اگر کاربر کد ندارد: فقط پروفایل و دستگاه‌های خودش را inactive کن
     if (!codeId) {
-      await userRef.update({
-        planType: "free",
+      // فقط خود کاربر را ریست کن
+      const udevs = await userRef.collection('devices').get();
+      const batch = db.batch();
+      udevs.docs.forEach((d) => {
+        batch.set(d.ref, { isActive: false, active: false, lastSeenAt: now }, { merge: true });
+      });
+      batch.set(userRef, {
+        planType: 'free',
+        status: 'active',
         subscription: admin.firestore.FieldValue.delete(),
         tokenId: admin.firestore.FieldValue.delete(),
-        status: "active",
-      });
-      const now = admin.firestore.Timestamp.now();
-      const udevs = await userRef.collection("devices").get();
-      await Promise.all(
-        udevs.docs.map((d) =>
-          userRef.collection("devices").doc(d.id).set(
-            { isActive: false, active: false, lastSeenAt: now },
-            { merge: true }
-          )
-        )
-      );
-      return res.status(200).json({ ok: true, clearedDevices: 0 });
+      }, { merge: true });
+      await batch.commit();
+      return res.status(200).json({ ok: true, clearedDevices: udevs.size });
     }
 
-    const codeRef = db.collection("codes").doc(codeId);
-    const devsRef = codeRef.collection("devices");
-
-    // فقط دستگاه‌های فعال همین کاربر برای این کد
-    const activeByUserSnap = await devsRef
-      .where("uid", "==", uid)
-      .where("isActive", "==", true)
-      .get();
-    const activeCount = activeByUserSnap.size;
-
-    const userDevsSnap = await userRef.collection("devices").get();
+    // دستگاه‌های این کاربر روی این کد را آزاد کن
+    const codeRef = db.collection('codes').doc(codeId);
+    const devsSnap = await codeRef.collection('devices').where('uid', '==', uid).where('isActive', '==', true).get();
 
     await db.runTransaction(async (tx) => {
-      const codeSnap = await tx.get(codeRef);
-      if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
-
-      const code = codeSnap.data() || {};
-      const active = Number(code.activeDevices ?? 0);
-      const max = Number(code.maxDevices ?? code.deviceLimit ?? 0);
-      const now = admin.firestore.Timestamp.now();
-
-      // آزاد کردن دستگاه‌های کاربر
-      activeByUserSnap.docs.forEach((docSnap) => {
-        tx.set(
-          devsRef.doc(docSnap.id),
-          { isActive: false, active: false, releasedAt: now },
-          { merge: true }
-        );
+      devsSnap.docs.forEach((docSnap) => {
+        tx.set(docSnap.ref, { isActive: false, active: false, releasedAt: now }, { merge: true });
       });
 
-      const newActive = Math.max(0, active - activeCount);
-      tx.update(codeRef, {
-        activeDevices: newActive,
-        isUsed: newActive >= max,
-        lastDeviceReleasedAt: now,
-        // ❌ activatedAt را عمداً تغییر نمی‌دهیم
+      // آینه‌ی زیر users
+      const udevs = await tx.get(userRef.collection('devices'));
+      udevs.docs.forEach((ud) => {
+        tx.set(ud.ref, { isActive: false, active: false, lastSeenAt: now }, { merge: true });
       });
 
-      // ریست پروفایل کاربر (کد از پروفایل جدا می‌شود)
-      tx.update(userRef, {
-        planType: "free",
+      // پروفایل کاربر به حالت Free
+      tx.set(userRef, {
+        planType: 'free',
+        status: 'active',
         subscription: admin.firestore.FieldValue.delete(),
         tokenId: admin.firestore.FieldValue.delete(),
-        status: "active",
-      });
+      }, { merge: true });
 
-      // آینه‌ی devices زیر users/{uid}
-      userDevsSnap.docs.forEach((ud) => {
-        tx.set(
-          userRef.collection("devices").doc(ud.id),
-          { isActive: false, active: false, lastSeenAt: now },
-          { merge: true }
-        );
-      });
-
-      // حذف redemption برای تست دوباره (اختیاری)
-      if (alsoRemoveRedemption) {
-        tx.delete(codeRef.collection("redemptions").doc(uid));
-      }
+      // ❗ تاریخ‌های activatedAt / expiresAt کد دست نمی‌خورد
     });
 
-    return res.status(200).json({ ok: true, clearedDevices: activeCount, codeId });
+    return res.status(200).json({ ok: true, clearedDevices: devsSnap.size, codeId });
   } catch (e) {
-    console.error("admin-reset-user error:", e);
-    return res.status(500).json({ error: e?.message || "INTERNAL" });
+    console.error('admin-reset-user error:', e);
+    return res.status(500).json({ error: e.message || 'INTERNAL' });
   }
 }

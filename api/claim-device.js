@@ -1,113 +1,84 @@
 // api/claim-device.js
-import { db } from "./firebase-admin.config.js";
-import admin from "firebase-admin";
+import 'dotenv/config';
+import admin from 'firebase-admin';
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert({
+      projectId: process.env.FIREBASE_PROJECT_ID,
+      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    }),
+  });
+}
+const db = admin.firestore();
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
+    const { uid, codeId, deviceId, deviceInfo = {} } = req.body || {};
+    if (!uid || !codeId || !deviceId) return res.status(400).json({ error: 'uid, codeId, deviceId required' });
 
-    let body = req.body;
-    if (!body) {
-      try { body = await req.json?.(); } catch (_) {}
-    }
-    const { uid, codeId, deviceId, deviceInfo = {} } = body || {};
-    if (!uid || !codeId || !deviceId) return res.status(400).json({ error: "uid, codeId, deviceId are required" });
-
-    const codeRef = db.collection("codes").doc(codeId);
-    const codeDevRef = codeRef.collection("devices").doc(deviceId);
-    const userDevRef = db.collection("users").doc(uid).collection("devices").doc(deviceId);
+    const codeRef = db.collection('codes').doc(codeId);
+    const userDevRef = db.collection('users').doc(uid).collection('devices').doc(deviceId);
+    const codeDevRef = codeRef.collection('devices').doc(deviceId);
 
     const result = await db.runTransaction(async (tx) => {
       const codeSnap = await tx.get(codeRef);
-      if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
+      if (!codeSnap.exists) throw new Error('CODE_NOT_FOUND');
       const code = codeSnap.data() || {};
 
-      const deviceLimit = Number(code.deviceLimit ?? 0);
-      if (deviceLimit <= 0) throw new Error("INVALID_DEVICE_LIMIT");
+      // خوانش متادیتا به صورت سازگار
+      const limit = Number(code.remainingDevices ?? code.deviceLimit ?? 0);
+      const expiresAt = code.expiresAt;
+      if (!limit) throw new Error('INVALID_CODE_META');
+      if (expiresAt && expiresAt.toDate() < new Date()) throw new Error('CODE_EXPIRED');
 
-      // تاریخ‌ها
-      let activatedAt = code.activatedAt;
+      // تعداد فعال فعلی را از ساب‌کالکشن بشمار
+      const activeSnap = await tx.get(codeRef.collection('devices').where('isActive', '==', true));
+      const activeCount = activeSnap.size;
+
+      // اگر همین device قبلاً فعال است، اجازه بده idempotent باشد
+      const thisDevSnap = await tx.get(codeDevRef);
+      const alreadyActive = thisDevSnap.exists && !!thisDevSnap.data().isActive;
+
+      if (!alreadyActive && activeCount >= limit) throw new Error('DEVICE_LIMIT_REACHED');
+
       const now = admin.firestore.Timestamp.now();
-      if (!activatedAt) {
-        // احتیاط: اگر قبلش apply نشده باشه، همینجا ست می‌کنیم
-        activatedAt = now;
-        tx.update(codeRef, { activatedAt });
-      }
-      const expiresAt = admin.firestore.Timestamp.fromMillis(
-        activatedAt.toMillis() + Number(code.duration ?? 0) * 86400000
-      );
-      if (expiresAt.toMillis() < Date.now()) throw new Error("CODE_EXPIRED");
 
-      // وضعیت ظرفیت
-      const active = Number(code.activeDevices ?? 0);
-
-      // وضعیت دیوایس فعلی
-      const codeDevSnap = await tx.get(codeDevRef);
-      const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
-
-      // اگر همین دستگاه قبلاً active بوده، idempotent برگرد
-      if (wasActive) {
-        return {
-          activeDevices: active,
-          maxDevices: deviceLimit,
-          deviceId,
-          alreadyActive: true,
-        };
-      }
-
-      // اگر ظرفیت پر است، اجازه نده
-      if (active >= deviceLimit) {
-        throw new Error("DEVICE_LIMIT_REACHED");
-      }
-
-      // فعال‌سازی دستگاه
-      tx.set(
-        codeDevRef,
-        {
-          uid,
-          isActive: true,
-          claimedAt: now,
-          platform: deviceInfo.platform || null,
-          model: deviceInfo.model || null,
-          appVersion: deviceInfo.appVersion || null,
-        },
-        { merge: true }
-      );
-
-      // افزایش شمارنده
-      tx.update(codeRef, {
-        activeDevices: active + 1,
-        isUsed: active + 1 >= deviceLimit,
-        lastDeviceClaimedAt: now,
-      });
-
-      // آینه‌ی زیر کاربر
-      tx.set(
-        userDevRef,
-        {
-          deviceId,
-          uid,
-          isActive: true,
-          platform: deviceInfo.platform || null,
-          model: deviceInfo.model || null,
-          appVersion: deviceInfo.appVersion || null,
-          registeredAt: admin.firestore.FieldValue.serverTimestamp(),
-          lastSeenAt: now,
-        },
-        { merge: true }
-      );
-
-      return {
-        activeDevices: active + 1,
-        maxDevices: deviceLimit,
+      // زیر codes/{codeId}/devices
+      tx.set(codeDevRef, {
+        uid,
         deviceId,
-        alreadyActive: false,
-      };
+        isActive: true,
+        claimedAt: now,
+        lastSeenAt: now,
+        ...deviceInfo,
+      }, { merge: true });
+
+      // آینه زیر users/{uid}/devices
+      tx.set(userDevRef, {
+        id: deviceId,
+        deviceId,
+        isActive: true,
+        active: true,
+        registeredAt: admin.firestore.FieldValue.increment(0) || now, // اگر نبود می‌شود now
+        lastSeenAt: now,
+        ...deviceInfo,
+      }, { merge: true });
+
+      return { activeDevices: alreadyActive ? activeCount : activeCount + 1, maxDevices: limit };
     });
 
-    return res.status(200).json({ ok: true, ...result });
+    return res.status(200).json(result);
   } catch (e) {
-    console.error("claim-device error:", e);
-    return res.status(400).json({ error: e.message || "BAD_REQUEST" });
+    console.error('claim-device error:', e);
+    const msg = e.message || 'INTERNAL';
+    const status =
+      msg === 'DEVICE_LIMIT_REACHED' ? 409 :
+      msg === 'CODE_EXPIRED' ? 410 :
+      msg.includes('NOT_FOUND') ? 404 :
+      msg === 'INVALID_CODE_META' ? 400 : 500;
+    return res.status(status).json({ error: msg });
   }
 }
