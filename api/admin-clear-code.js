@@ -8,41 +8,47 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "Method Not Allowed" });
     }
 
-    // بدنهٔ درخواست
+    // body
     let body = req.body;
-    if (!body) {
-      try { body = await req.json?.(); } catch (_) {}
-    }
+    if (!body) { try { body = await req.json?.(); } catch (_) {} }
     const { codeId } = body || {};
     if (!codeId) return res.status(400).json({ error: "codeId is required" });
 
     const codeRef = db.collection("codes").doc(codeId);
-    const snap = await codeRef.get();
-    if (!snap.exists) return res.status(404).json({ error: "CODE_NOT_FOUND" });
+    const codeSnap = await codeRef.get();
+    if (!codeSnap.exists) return res.status(404).json({ error: "CODE_NOT_FOUND" });
 
     const devsRef = codeRef.collection("devices");
     const devsSnap = await devsRef.get();
 
     const now = admin.firestore.Timestamp.now();
-    let cleared = 0;
     const CHUNK = 400;
+    let cleared = 0;
 
     const docs = devsSnap.docs;
     for (let i = 0; i < docs.length; i += CHUNK) {
       const slice = docs.slice(i, i + CHUNK);
       const batch = db.batch();
+
       slice.forEach((d) => {
         const data = d.data() || {};
-
         // زیر codes/{codeId}/devices
-        batch.set(devsRef.doc(d.id), { isActive: false, active: false, releasedAt: now }, { merge: true });
-
+        batch.set(
+          devsRef.doc(d.id),
+          { isActive: false, active: false, releasedAt: now },
+          { merge: true }
+        );
         // آینه زیر users/{uid}/devices
         if (data.uid) {
           const userDevRef = db.collection("users").doc(data.uid).collection("devices").doc(d.id);
-          batch.set(userDevRef, { isActive: false, active: false, lastSeenAt: now }, { merge: true });
+          batch.set(
+            userDevRef,
+            { isActive: false, active: false, lastSeenAt: now },
+            { merge: true }
+          );
         }
       });
+
       await batch.commit();
       cleared += slice.length;
     }
@@ -51,6 +57,7 @@ export default async function handler(req, res) {
       activeDevices: 0,
       isUsed: false,
       lastDeviceReleasedAt: now,
+      // ❌ activatedAt را عمداً تغییر نمی‌دهیم
     });
 
     return res.status(200).json({ ok: true, clearedDevices: cleared });

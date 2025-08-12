@@ -8,11 +8,9 @@ export default async function handler(req, res) {
       return res.status(405).json({ error: "Method Not Allowed" });
     }
 
-    // بدنهٔ درخواست
+    // body
     let body = req.body;
-    if (!body) {
-      try { body = await req.json?.(); } catch (_) {}
-    }
+    if (!body) { try { body = await req.json?.(); } catch (_) {} }
     const { uid, alsoRemoveRedemption = true } = body || {};
     if (!uid) return res.status(400).json({ error: "uid is required" });
 
@@ -23,7 +21,7 @@ export default async function handler(req, res) {
     const user = userSnap.data() || {};
     const codeId = user.tokenId;
 
-    // کاربر کد ندارد → فقط ریست پروفایل و غیرفعال‌کردن دیوایس‌ها
+    // اگر کاربر کد ندارد: فقط پروفایل و دستگاه‌های خودش را inactive کن
     if (!codeId) {
       await userRef.update({
         planType: "free",
@@ -47,7 +45,7 @@ export default async function handler(req, res) {
     const codeRef = db.collection("codes").doc(codeId);
     const devsRef = codeRef.collection("devices");
 
-    // دستگاه‌های فعال این کاربر برای همین کد
+    // فقط دستگاه‌های فعال همین کاربر برای این کد
     const activeByUserSnap = await devsRef
       .where("uid", "==", uid)
       .where("isActive", "==", true)
@@ -65,9 +63,13 @@ export default async function handler(req, res) {
       const max = Number(code.maxDevices ?? code.deviceLimit ?? 0);
       const now = admin.firestore.Timestamp.now();
 
-      // آزاد کردن دیوایس‌های کاربر
+      // آزاد کردن دستگاه‌های کاربر
       activeByUserSnap.docs.forEach((docSnap) => {
-        tx.set(devsRef.doc(docSnap.id), { isActive: false, active: false, releasedAt: now }, { merge: true });
+        tx.set(
+          devsRef.doc(docSnap.id),
+          { isActive: false, active: false, releasedAt: now },
+          { merge: true }
+        );
       });
 
       const newActive = Math.max(0, active - activeCount);
@@ -75,9 +77,10 @@ export default async function handler(req, res) {
         activeDevices: newActive,
         isUsed: newActive >= max,
         lastDeviceReleasedAt: now,
+        // ❌ activatedAt را عمداً تغییر نمی‌دهیم
       });
 
-      // ریست پروفایل کاربر
+      // ریست پروفایل کاربر (کد از پروفایل جدا می‌شود)
       tx.update(userRef, {
         planType: "free",
         subscription: admin.firestore.FieldValue.delete(),
@@ -85,7 +88,7 @@ export default async function handler(req, res) {
         status: "active",
       });
 
-      // آینهٔ devices زیر users/{uid}
+      // آینه‌ی devices زیر users/{uid}
       userDevsSnap.docs.forEach((ud) => {
         tx.set(
           userRef.collection("devices").doc(ud.id),
@@ -94,7 +97,7 @@ export default async function handler(req, res) {
         );
       });
 
-      // حذف redemption (اختیاری برای تست مجدد)
+      // حذف redemption برای تست دوباره (اختیاری)
       if (alsoRemoveRedemption) {
         tx.delete(codeRef.collection("redemptions").doc(uid));
       }
