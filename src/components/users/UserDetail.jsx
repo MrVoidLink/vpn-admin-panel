@@ -22,9 +22,10 @@ const diffDays = (f) => { const d = toDate(f); if (!d) return null; const ms = d
 const fmtBytes = (n) => { const v = Number(n||0); if (Number.isNaN(v)) return "0 B"; if (v<1024) return `${v} B`; const u=["KB","MB","GB","TB"]; let i=-1,val=v; do{val/=1024;i++;}while(val>=1024&&i<u.length-1); return `${val.toFixed(1)} ${u[i]}`; };
 const safe = (v) => (v === undefined || v === null || v === "" ? "—" : v);
 
-// هدرهای ادمین: در پروداکشن کلید می‌پرسیم، در Dev لازم نیست
-const buildAdminHeaders = async () => ({ "Content-Type": "application/json" });
-;
+// هدرهای ادمین: بدون کلید/اتورایز
+const buildAdminHeaders = async () => ({
+  "Content-Type": "application/json"
+});
 
 const UserDetail = () => {
   const { id } = useParams();
@@ -137,7 +138,7 @@ const UserDetail = () => {
               </>
             )}
 
-            {/* دکمه‌های ادمین: همیشه نمایش داده شوند */}
+            {/* دکمه‌های ادمین: بدون کلید */}
             <button
               onClick={async () => {
                 try {
@@ -152,7 +153,6 @@ const UserDetail = () => {
                   alert(`User reset OK (cleared ${data?.clearedDevices ?? 0} devices)`);
                   window.location.reload();
                 } catch (e) {
-                  if (e.message === "NO_ADMIN_KEY") return;
                   console.error(e); alert("RESET request failed");
                 }
               }}
@@ -173,7 +173,6 @@ const UserDetail = () => {
                   if (!r.ok) return alert(`CLEAR failed: ${data?.error || r.status}`);
                   alert(`Code cleared OK (devices affected: ${data?.clearedDevices ?? 0})`);
                 } catch (e) {
-                  if (e.message === "NO_ADMIN_KEY") return;
                   console.error(e); alert("CLEAR request failed");
                 }
               }}
