@@ -1,3 +1,4 @@
+// vite-project/api/generate-code.js
 import { db } from "./firebase-admin.config.js";
 import { Timestamp } from "firebase-admin/firestore";
 
@@ -8,9 +9,10 @@ export default async function handler(req, res) {
       duration = 30,
       deviceLimit = 1,
       type = "premium",
+      source = "admin", // منبع تولید کد
     } = req.query;
 
-    console.log("🧩 API Called with:", { count, duration, deviceLimit, type });
+    console.log("🧩 API Called with:", { count, duration, deviceLimit, type, source });
 
     const allowedDurations = [15, 30, 60, 90, 180, 365];
     const allowedTypes = ["premium", "gift"];
@@ -27,15 +29,17 @@ export default async function handler(req, res) {
       const code = Math.random().toString(36).substring(2, 10).toUpperCase();
 
       const codeData = {
-        code,
-        duration: Number(duration),
-        deviceLimit: Number(deviceLimit),
-        type,
+        code,                          // کد قابل نمایش
+        type,                          // premium یا gift
+        validForDays: Number(duration),// مدت اعتبار (روز)
+        remainingDevices: Number(deviceLimit), // چند دستگاه می‌تواند فعال کند
+        isUsed: false,                 // هنوز استفاده نشده
+        source,                        // منبع تولید کد
         createdAt: Timestamp.now(),
-        isUsed: false,
-        activatedAt: null,
+        activatedAt: null,             // برای تاریخ فعال‌سازی اگر لازم شد
       };
 
+      // ذخیره با شناسه برابر با کد (doc.id = code)
       await db.collection("codes").doc(code).set(codeData);
       codes.push(codeData);
     }
