@@ -66,7 +66,7 @@ const UserDetail = () => {
             <h2 className="text-2xl font-bold text-gray-800">User Details</h2>
             <p className="text-gray-500 text-sm break-all">UID: {user.uid}</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {import.meta.env.DEV && user && (
               <>
                 {/* Apply Token */}
@@ -130,6 +130,51 @@ const UserDetail = () => {
                   }}
                   className="text-sm bg-amber-600 text-white px-3 py-1 rounded hover:bg-amber-700"
                 >Release Device (DEV)</button>
+
+                {/* Admin: Reset user */}
+                <button
+                  onClick={async () => {
+                    if (!user.uid) return alert("UID نداریم!");
+                    const key = prompt("Enter ADMIN_API_KEY:");
+                    if (!key) return;
+                    try {
+                      const r = await fetch("/api/admin-reset-user", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "x-admin-key": key },
+                        body: JSON.stringify({ uid: user.uid, alsoRemoveRedemption: true }),
+                      });
+                      let data=null; try{ data=await r.json(); }catch(_){}
+                      if (!r.ok) return alert(`RESET failed: ${data?.error || r.status}`);
+                      alert(`User reset OK (cleared ${data?.clearedDevices ?? 0} devices)`); 
+                      window.location.reload();
+                    } catch (e) {
+                      console.error(e); alert("RESET request failed");
+                    }
+                  }}
+                  className="text-sm bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
+                >Reset User (DEV)</button>
+
+                {/* Admin: Clear all devices of a code */}
+                <button
+                  onClick={async () => {
+                    if (!user.tokenId) return alert("tokenId نداریم (اول Apply Token)!");
+                    const key = prompt("Enter ADMIN_API_KEY:");
+                    if (!key) return;
+                    try {
+                      const r = await fetch("/api/admin-clear-code", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json", "x-admin-key": key },
+                        body: JSON.stringify({ codeId: user.tokenId }),
+                      });
+                      let data=null; try{ data=await r.json(); }catch(_){}
+                      if (!r.ok) return alert(`CLEAR failed: ${data?.error || r.status}`);
+                      alert(`Code cleared OK (devices affected: ${data?.clearedDevices ?? 0})`);
+                    } catch (e) {
+                      console.error(e); alert("CLEAR request failed");
+                    }
+                  }}
+                  className="text-sm bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
+                >Clear Code (DEV)</button>
               </>
             )}
             <button
@@ -224,6 +269,7 @@ const UserDetail = () => {
             </table>
           </div>
         </div>
+
       </div>
     </div>
   );
