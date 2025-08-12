@@ -1,4 +1,3 @@
-// api/admin-clear-code.js
 import 'dotenv/config';
 import admin from 'firebase-admin';
 
@@ -13,13 +12,29 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+// Fallback: در dev بدنه‌ی JSON را خودمان بخوانیم
+async function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object') return req.body;
+  return await new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => (data += c));
+    req.on('end', () => {
+      try { resolve(JSON.parse(data || '{}')); }
+      catch { resolve({}); }
+    });
+    req.on('error', () => resolve({}));
+  });
+}
+
 export default async function handler(req, res) {
+  console.log('[admin-clear-code] called', req.method, req.url);
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    // ⛔️ هیچ چک کلیدی وجود ندارد
+    const body = await readJsonBody(req);
+    console.log('[admin-clear-code] body:', body);
 
-    const { codeId } = req.body || {};
+    const { codeId } = body || {};
     if (!codeId) return res.status(400).json({ error: 'codeId is required' });
 
     const codeRef = db.collection('codes').doc(codeId);
@@ -37,34 +52,21 @@ export default async function handler(req, res) {
     for (let i = 0; i < docs.length; i += CHUNK) {
       const slice = docs.slice(i, i + CHUNK);
       const batch = db.batch();
+
       slice.forEach((d) => {
         const data = d.data() || {};
-        // خود دستگاه زیر codes
-        batch.set(
-          devsRef.doc(d.id),
-          { isActive: false, active: false, releasedAt: now },
-          { merge: true }
-        );
-        // آینه زیر users/{uid}/devices
+        batch.set(devsRef.doc(d.id), { isActive: false, active: false, releasedAt: now }, { merge: true });
         if (data.uid) {
           const userDevRef = db.collection('users').doc(data.uid).collection('devices').doc(d.id);
-          batch.set(
-            userDevRef,
-            { isActive: false, active: false, lastSeenAt: now },
-            { merge: true }
-          );
+          batch.set(userDevRef, { isActive: false, active: false, lastSeenAt: now }, { merge: true });
         }
       });
+
       await batch.commit();
       cleared += slice.length;
     }
 
-    await codeRef.update({
-      activeDevices: 0,
-      isUsed: false,
-      lastDeviceReleasedAt: now,
-    });
-
+    await codeRef.update({ activeDevices: 0, isUsed: false, lastDeviceReleasedAt: now });
     return res.status(200).json({ ok: true, clearedDevices: cleared });
   } catch (e) {
     console.error('admin-clear-code error:', e);
