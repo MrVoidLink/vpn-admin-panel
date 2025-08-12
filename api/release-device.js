@@ -25,42 +25,58 @@ export default async function handler(req, res) {
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
     const userDevRef = db.collection("users").doc(uid).collection("devices").doc(deviceId);
 
+    let result = { activeDevices: null, maxDevices: null };
+
     await db.runTransaction(async (tx) => {
       const [codeSnap, codeDevSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
 
+      const code = codeSnap.data() || {};
+      const max = Number(code.maxDevices ?? 0);
+      const active = Number(code.activeDevices ?? 0);
+      result.maxDevices = max;
+
       const wasActive = codeDevSnap.exists && codeDevSnap.data()?.isActive === true;
 
-      // اگر از قبل آزاد بوده، فقط آینه کاربر را بروزرسانی کن و خارج شو (idempotent)
+      const now = admin.firestore.Timestamp.now();
+
       if (!wasActive) {
-        tx.set(userDevRef, { isActive: false, lastSeenAt: admin.firestore.Timestamp.now() }, { merge: true });
+        // idempotent: قبلاً آزاد بوده
+        tx.set(
+          userDevRef,
+          { isActive: false, active: false, lastSeenAt: now },
+          { merge: true }
+        );
+        result.activeDevices = active;
         return;
       }
 
       // آزاد کردن
       tx.update(codeDevRef, {
         isActive: false,
-        releasedAt: admin.firestore.Timestamp.now(),
+        active: false, // legacy sync
+        releasedAt: now,
       });
 
-      const code = codeSnap.data();
-      const active = Number(code.activeDevices ?? 0);
       const newActive = Math.max(0, active - 1);
 
       tx.update(codeRef, {
         activeDevices: newActive,
-        isUsed: newActive >= Number(code.maxDevices ?? 0), // اگر هنوز پر است true می‌ماند
-        lastDeviceReleasedAt: admin.firestore.Timestamp.now(),
+        isUsed: newActive >= max, // اگر هنوز پر است true می‌ماند، وگرنه false
+        lastDeviceReleasedAt: now,
       });
 
       // آینه کاربر
-      tx.set(userDevRef, {
-        isActive: false,
-        lastSeenAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+      tx.set(
+        userDevRef,
+        { isActive: false, active: false, lastSeenAt: now },
+        { merge: true }
+      );
+
+      result.activeDevices = newActive;
     });
 
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, ...result });
   } catch (e) {
     const map = { CODE_NOT_FOUND: 404 };
     return res.status(map[e.message] || 500).json({ error: e.message || "INTERNAL" });

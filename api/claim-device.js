@@ -25,29 +25,38 @@ export default async function handler(req, res) {
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
     const userDevRef = db.collection("users").doc(uid).collection("devices").doc(deviceId);
 
+    let result = { activeDevices: null, maxDevices: null };
+
     await db.runTransaction(async (tx) => {
       const [codeSnap, codeDevSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
 
-      const code = codeSnap.data();
+      const code = codeSnap.data() || {};
       const max = Number(code.maxDevices ?? code.remainingDevices ?? code.deviceLimit ?? 1);
       const active = Number(code.activeDevices ?? 0);
+      result.maxDevices = max;
 
-      // اگر این دستگاه قبلا فعال شده، ایدمپوتنت: فقط متادیتا آپدیت کن و خارج شو
+      // اگر قبلاً همین دستگاه فعال بوده → ایدمپوتنت: فقط متادیتا آپدیت
       if (codeDevSnap.exists && codeDevSnap.data()?.isActive) {
         tx.update(codeDevRef, {
           ...deviceInfo,
           uid,
-          lastSeenAt: admin.firestore.Timestamp.now(),
           isActive: true,
+          active: true, // legacy sync
+          lastSeenAt: admin.firestore.Timestamp.now(),
         });
-        // mirror به پروفایل کاربر
-        tx.set(userDevRef, {
-          deviceId,
-          ...deviceInfo,
-          isActive: true,
-          lastSeenAt: admin.firestore.Timestamp.now(),
-        }, { merge: true });
+        tx.set(
+          userDevRef,
+          {
+            deviceId,
+            ...deviceInfo,
+            isActive: true,
+            active: true, // legacy sync
+            lastSeenAt: admin.firestore.Timestamp.now(),
+          },
+          { merge: true }
+        );
+        result.activeDevices = active;
         return;
       }
 
@@ -55,33 +64,46 @@ export default async function handler(req, res) {
       if (active >= max) throw new Error("DEVICE_LIMIT_REACHED");
 
       // فعال‌سازی این دستگاه
-      tx.set(codeDevRef, {
-        uid,
-        deviceId,
-        ...deviceInfo,
-        isActive: true,
-        claimedAt: admin.firestore.Timestamp.now(),
-        lastSeenAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+      const now = admin.firestore.Timestamp.now();
+      tx.set(
+        codeDevRef,
+        {
+          uid,
+          deviceId,
+          ...deviceInfo,
+          isActive: true,
+          active: true, // legacy sync
+          claimedAt: now,
+          lastSeenAt: now,
+        },
+        { merge: true }
+      );
 
       // افزایش شمارنده
       tx.update(codeRef, {
         activeDevices: admin.firestore.FieldValue.increment(1),
-        isUsed: active + 1 >= max, // وقتی پر شد true
-        lastDeviceClaimedAt: admin.firestore.Timestamp.now(),
+        isUsed: active + 1 >= max,
+        lastDeviceClaimedAt: now,
       });
 
       // آینه در پروفایل کاربر
-      tx.set(userDevRef, {
-        deviceId,
-        ...deviceInfo,
-        isActive: true,
-        registeredAt: admin.firestore.FieldValue.serverTimestamp(),
-        lastSeenAt: admin.firestore.Timestamp.now(),
-      }, { merge: true });
+      tx.set(
+        userDevRef,
+        {
+          deviceId,
+          ...deviceInfo,
+          isActive: true,
+          active: true, // legacy sync
+          registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+          lastSeenAt: now,
+        },
+        { merge: true }
+      );
+
+      result.activeDevices = active + 1;
     });
 
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, ...result });
   } catch (e) {
     const map = {
       CODE_NOT_FOUND: 404,

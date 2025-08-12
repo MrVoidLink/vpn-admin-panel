@@ -1,72 +1,31 @@
 // src/components/users/UserDetail.jsx
 import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  collection,
-  getDocs,
-} from "firebase/firestore";
+import { getFirestore, doc, getDoc, collection, getDocs } from "firebase/firestore";
 import firebaseApp from "../../firebase/firebaseConfig";
 
-// Helpers
-const isTimestamp = (v) =>
-  v && typeof v === "object" && ("seconds" in v || "toDate" in v);
-
+// helpers
+const isTimestamp = (v) => v && typeof v === "object" && ("seconds" in v || "toDate" in v);
 const toDate = (v) => {
   try {
     if (!v) return null;
     if (v instanceof Date) return v;
-    if (isTimestamp(v)) {
-      return typeof v.toDate === "function"
-        ? v.toDate()
-        : new Date(v.seconds * 1000);
-    }
+    if (isTimestamp(v)) return typeof v.toDate === "function" ? v.toDate() : new Date(v.seconds * 1000);
     if (typeof v === "number") return new Date(v);
     return new Date(v);
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 };
-
-const fmtDate = (v) => {
-  const d = toDate(v);
-  return d ? d.toLocaleString() : "—";
-};
-
-const diffDays = (future) => {
-  const d = toDate(future);
-  if (!d) return null;
-  const now = new Date();
-  const ms = d.getTime() - now.getTime();
-  return Math.ceil(ms / (1000 * 60 * 60 * 24));
-};
-
-const fmtBytes = (n) => {
-  const v = Number(n || 0);
-  if (Number.isNaN(v)) return "0 B";
-  if (v < 1024) return `${v} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let i = -1;
-  let val = v;
-  do {
-    val /= 1024;
-    i++;
-  } while (val >= 1024 && i < units.length - 1);
-  return `${val.toFixed(1)} ${units[i]}`;
-};
-
+const fmtDate = (v) => { const d = toDate(v); return d ? d.toLocaleString() : "—"; };
+const diffDays = (f) => { const d = toDate(f); if (!d) return null; const ms = d - new Date(); return Math.ceil(ms / 86400000); };
+const fmtBytes = (n) => { const v = Number(n||0); if (Number.isNaN(v)) return "0 B"; if (v<1024) return `${v} B`; const u=["KB","MB","GB","TB"]; let i=-1,val=v; do{val/=1024;i++;}while(val>=1024&&i<u.length-1); return `${val.toFixed(1)} ${u[i]}`; };
 const safe = (v) => (v === undefined || v === null || v === "" ? "—" : v);
 
 const UserDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-
   const [user, setUser] = useState(null);
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
-
   const db = getFirestore(firebaseApp);
 
   useEffect(() => {
@@ -75,36 +34,20 @@ const UserDetail = () => {
       try {
         const userRef = doc(db, "users", id);
         const userSnap = await getDoc(userRef);
-
-        if (!userSnap.exists()) {
-          setUser(null);
-          setDevices([]);
-          return;
-        }
-
+        if (!userSnap.exists()) { setUser(null); setDevices([]); return; }
         const data = { uid: userSnap.id, ...userSnap.data() };
         setUser(data);
 
-        // devices subcollection
         const devRef = collection(db, "users", id, "devices");
         const devSnap = await getDocs(devRef);
         const devs = devSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // sort by lastSeenAt desc
-        devs.sort((a, b) => {
-          const ad = toDate(a?.lastSeenAt)?.getTime() || 0;
-          const bd = toDate(b?.lastSeenAt)?.getTime() || 0;
-          return bd - ad;
-        });
+        devs.sort((a,b) => ((toDate(b?.lastSeenAt)?.getTime()||0) - (toDate(a?.lastSeenAt)?.getTime()||0)));
         setDevices(devs);
-      } catch (error) {
-        console.error("خطا در دریافت کاربر/دستگاه‌ها:", error);
-        setUser(null);
-        setDevices([]);
-      } finally {
-        setLoading(false);
-      }
+      } catch (e) {
+        console.error("خطا در دریافت کاربر/دستگاه‌ها:", e);
+        setUser(null); setDevices([]);
+      } finally { setLoading(false); }
     };
-
     fetchAll();
   }, [id]);
 
@@ -137,27 +80,15 @@ const UserDetail = () => {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ uid: user.uid, codeId }),
                       });
-
-                      let data = null;
-                      try { data = await r.json(); } catch (_) {}
-
-                      if (!r.ok) {
-                        alert(`Failed: ${data?.error || r.status}`);
-                        return;
-                      }
-                      alert("Applied!");
-                      window.location.reload();
-                    } catch (e) {
-                      alert("Request failed");
-                      console.error(e);
-                    }
+                      let data = null; try { data = await r.json(); } catch(_) {}
+                      if (!r.ok) return alert(`Failed: ${data?.error || r.status}`);
+                      alert("Applied!"); window.location.reload();
+                    } catch (e) { console.error(e); alert("Request failed"); }
                   }}
                   className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
-                >
-                  Apply Token (DEV)
-                </button>
+                >Apply Token (DEV)</button>
 
-                {/* Claim device */}
+                {/* Claim */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
@@ -170,26 +101,17 @@ const UserDetail = () => {
                       const r = await fetch("/api/claim-device", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          uid: user.uid,
-                          codeId: user.tokenId,
-                          deviceId,
-                          deviceInfo: { platform, model, appVersion },
-                        }),
+                        body: JSON.stringify({ uid: user.uid, codeId: user.tokenId, deviceId, deviceInfo: { platform, model, appVersion } }),
                       });
                       let data = null; try { data = await r.json(); } catch(_) {}
                       if (!r.ok) return alert(`CLAIM failed: ${data?.error || r.status}`);
-                      alert("CLAIM ok");
-                    } catch (e) {
-                      console.error(e); alert("CLAIM request failed");
-                    }
+                      alert(`CLAIM ok (${data.activeDevices}/${data.maxDevices} active)`);
+                    } catch (e) { console.error(e); alert("CLAIM request failed"); }
                   }}
                   className="text-sm bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700"
-                >
-                  Claim Device (DEV)
-                </button>
+                >Claim Device (DEV)</button>
 
-                {/* Release device */}
+                {/* Release */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
@@ -199,31 +121,21 @@ const UserDetail = () => {
                       const r = await fetch("/api/release-device", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({
-                          uid: user.uid,
-                          codeId: user.tokenId,
-                          deviceId,
-                        }),
+                        body: JSON.stringify({ uid: user.uid, codeId: user.tokenId, deviceId }),
                       });
                       let data = null; try { data = await r.json(); } catch(_) {}
                       if (!r.ok) return alert(`RELEASE failed: ${data?.error || r.status}`);
-                      alert("RELEASE ok");
-                    } catch (e) {
-                      console.error(e); alert("RELEASE request failed");
-                    }
+                      alert(`RELEASE ok (${data.activeDevices}/${data.maxDevices} active)`);
+                    } catch (e) { console.error(e); alert("RELEASE request failed"); }
                   }}
                   className="text-sm bg-amber-600 text-white px-3 py-1 rounded hover:bg-amber-700"
-                >
-                  Release Device (DEV)
-                </button>
+                >Release Device (DEV)</button>
               </>
             )}
             <button
               onClick={() => navigate("/admin/users")}
               className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
-            >
-              ← بازگشت به لیست کاربران
-            </button>
+            >← بازگشت به لیست کاربران</button>
           </div>
         </div>
 
@@ -233,15 +145,10 @@ const UserDetail = () => {
           <div><span className="font-semibold">Language:</span> {safe(user?.language)}</div>
           <div>
             <span className="font-semibold">Status:</span>{" "}
-            <span
-              className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                user?.status === "active"
-                  ? "bg-green-100 text-green-700"
-                  : user?.status === "suspended"
-                  ? "bg-red-100 text-red-700"
-                  : "bg-gray-200 text-gray-600"
-              }`}
-            >
+            <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+              user?.status === "active" ? "bg-green-100 text-green-700"
+              : user?.status === "suspended" ? "bg-red-100 text-red-700"
+              : "bg-gray-200 text-gray-600"}`}>
               {safe(user?.status)}
             </span>
           </div>
@@ -289,38 +196,28 @@ const UserDetail = () => {
                 </tr>
               </thead>
               <tbody>
-                {devices.map((d, i) => (
-                  <tr
-                    key={d.id}
-                    className={`hover:bg-gray-50 border-b ${
-                      i % 2 === 0 ? "bg-white" : "bg-gray-50"
-                    }`}
-                  >
-                    <td className="px-5 py-3"><span className="break-all">{d.deviceId || d.id}</span></td>
-                    <td className="px-5 py-3">{safe(d.platform)}</td>
-                    <td className="px-5 py-3">{`${safe(d.model)}${d.brand ? " / " + d.brand : ""}`}</td>
-                    <td className="px-5 py-3">{safe(d.sdkInt)}</td>
-                    <td className="px-5 py-3">{safe(d.appVersion)}</td>
-                    <td className="px-5 py-3">{fmtDate(d.registeredAt || d.addedAt)}</td>
-                    <td className="px-5 py-3">{fmtDate(d.lastSeenAt)}</td>
-                    <td className="px-5 py-3">
-                      <span
-                        className={`px-2 py-0.5 text-xs font-medium rounded-full ${
-                          d.isActive || d.active
-                            ? "bg-green-100 text-green-700"
-                            : "bg-gray-200 text-gray-600"
-                        }`}
-                      >
-                        {d.isActive || d.active ? "Active" : "Inactive"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                {devices.map((d, i) => {
+                  const activeFlag = (typeof d.isActive === "boolean") ? d.isActive : !!d.active;
+                  return (
+                    <tr key={d.id} className={`hover:bg-gray-50 border-b ${i % 2 === 0 ? "bg-white" : "bg-gray-50"}`}>
+                      <td className="px-5 py-3"><span className="break-all">{d.deviceId || d.id}</span></td>
+                      <td className="px-5 py-3">{safe(d.platform)}</td>
+                      <td className="px-5 py-3">{`${safe(d.model)}${d.brand ? " / " + d.brand : ""}`}</td>
+                      <td className="px-5 py-3">{safe(d.sdkInt)}</td>
+                      <td className="px-5 py-3">{safe(d.appVersion)}</td>
+                      <td className="px-5 py-3">{fmtDate(d.registeredAt || d.addedAt)}</td>
+                      <td className="px-5 py-3">{fmtDate(d.lastSeenAt)}</td>
+                      <td className="px-5 py-3">
+                        <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${activeFlag ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}>
+                          {activeFlag ? "Active" : "Inactive"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
                 {devices.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-5 py-6 text-center text-gray-500">
-                      دستگاهی ثبت نشده است.
-                    </td>
+                    <td colSpan={8} className="px-5 py-6 text-center text-gray-500">دستگاهی ثبت نشده است.</td>
                   </tr>
                 )}
               </tbody>
