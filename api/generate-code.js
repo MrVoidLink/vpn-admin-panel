@@ -2,44 +2,56 @@
 import { db } from "./firebase-admin.config.js";
 import { Timestamp } from "firebase-admin/firestore";
 
+function randomCode(len = 8) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let s = "";
+  for (let i = 0; i < len; i++) s += alphabet[Math.floor(Math.random() * alphabet.length)];
+  return s;
+}
+
 export default async function handler(req, res) {
   try {
     const {
       count = 10,
-      duration = 30,
-      deviceLimit = 1,
+      validForDays = 30,    // v2 only
+      maxDevices = 1,       // v2 only
       type = "premium",
-      source = "admin", // منبع تولید کد
+      source = "admin",
     } = req.query;
 
-    console.log("🧩 API Called with:", { count, duration, deviceLimit, type, source });
+    const n = Number(count);
+    const days = Number(validForDays);
+    const max = Number(maxDevices);
 
     const allowedDurations = [15, 30, 60, 90, 180, 365];
     const allowedTypes = ["premium", "gift"];
 
-    if (!allowedDurations.includes(Number(duration))) {
-      return res.status(400).json({ success: false, error: "Invalid duration" });
-    }
-    if (!allowedTypes.includes(type)) {
+    if (!Number.isFinite(n) || n < 1 || n > 5000)
+      return res.status(400).json({ success: false, error: "Invalid count (1..5000)" });
+    if (!allowedDurations.includes(days))
+      return res.status(400).json({ success: false, error: "Invalid validForDays" });
+    if (!allowedTypes.includes(type))
       return res.status(400).json({ success: false, error: "Invalid code type" });
-    }
+    if (!Number.isFinite(max) || max < 1 || max > 10)
+      return res.status(400).json({ success: false, error: "Invalid maxDevices (1..10)" });
 
     const codes = [];
-    for (let i = 0; i < parseInt(count); i++) {
-      const code = Math.random().toString(36).substring(2, 10).toUpperCase();
-
+    for (let i = 0; i < n; i++) {
+      const code = randomCode(8);
       const codeData = {
-        code,                          // کد قابل نمایش
-        type,                          // premium یا gift
-        validForDays: Number(duration),// مدت اعتبار (روز)
-        remainingDevices: Number(deviceLimit), // چند دستگاه می‌تواند فعال کند
-        isUsed: false,                 // هنوز استفاده نشده
-        source,                        // منبع تولید کد
+        code,
+        type,
+        validForDays: days,
+        maxDevices: max,
+        activeDevices: 0,
+        source,
         createdAt: Timestamp.now(),
-        activatedAt: null,             // برای تاریخ فعال‌سازی اگر لازم شد
+        activatedAt: null,
+        expiresAt: null,
+        lastDeviceClaimedAt: null,
+        lastDeviceReleasedAt: null,
       };
 
-      // ذخیره با شناسه برابر با کد (doc.id = code)
       await db.collection("codes").doc(code).set(codeData);
       codes.push(codeData);
     }
@@ -51,7 +63,7 @@ export default async function handler(req, res) {
       codes,
     });
   } catch (error) {
-    console.error("❌ API Error:", error);
+    console.error("❌ generate-code error:", error);
     return res.status(500).json({ success: false, error: "Internal Server Error" });
   }
 }
