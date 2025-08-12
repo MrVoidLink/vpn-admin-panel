@@ -13,13 +13,29 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
+// fallback: read JSON body when req.body is undefined (Vite dev)
+async function readJsonBody(req) {
+  if (req.body && typeof req.body === 'object') return req.body;
+  return await new Promise((resolve) => {
+    let data = '';
+    req.on('data', (c) => (data += c));
+    req.on('end', () => {
+      try { resolve(JSON.parse(data || '{}')); }
+      catch { resolve({}); }
+    });
+    req.on('error', () => resolve({}));
+  });
+}
+
 export default async function handler(req, res) {
+  console.log('[admin-reset-user] called', req.method, req.url);
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    // ⛔️ هیچ چک کلیدی وجود ندارد
+    const body = await readJsonBody(req);
+    console.log('[admin-reset-user] body:', body);
 
-    const { uid, alsoRemoveRedemption = true } = req.body || {};
+    const { uid, alsoRemoveRedemption = true } = body || {};
     if (!uid) return res.status(400).json({ error: 'uid is required' });
 
     const userRef = db.collection('users').doc(uid);
@@ -28,6 +44,7 @@ export default async function handler(req, res) {
 
     const user = userSnap.data() || {};
     const codeId = user.tokenId;
+    console.log('[admin-reset-user] tokenId:', codeId);
 
     // اگر کاربر کد ندارد، فقط پروفایل ریست می‌شود
     if (!codeId) {
@@ -59,6 +76,7 @@ export default async function handler(req, res) {
       .where('isActive', '==', true)
       .get();
     const activeCount = activeByUserSnap.size;
+    console.log('[admin-reset-user] activeByUser:', activeCount);
 
     // دستگاه‌های کاربر (برای آینه)
     const userDevsSnap = await userRef.collection('devices').get();
