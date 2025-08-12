@@ -3,12 +3,13 @@ import React, { useState } from "react";
 const GenerateForm = ({ onGenerate }) => {
   const [count, setCount] = useState(10);
   const [validForDays, setValidForDays] = useState(30);
-  const [deviceLimit, setDeviceLimit] = useState(1);
+  const [maxDevices, setMaxDevices] = useState(1);
   const [type, setType] = useState("premium");
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    onGenerate({ count, validForDays, deviceLimit, type });
+    // ✅ فقط اسکیمای v2 ارسال می‌شود
+    onGenerate({ count, validForDays, maxDevices, type });
   };
 
   return (
@@ -61,17 +62,17 @@ const GenerateForm = ({ onGenerate }) => {
           </select>
         </div>
 
-        {/* Device Limit */}
+        {/* Max Devices */}
         <div className="flex-1 min-w-[200px]">
-          <label className="block mb-1 font-medium text-gray-700">Device Limit</label>
+          <label className="block mb-1 font-medium text-gray-700">Max devices</label>
           <select
-            value={deviceLimit}
-            onChange={(e) => setDeviceLimit(Number(e.target.value))}
+            value={maxDevices}
+            onChange={(e) => setMaxDevices(Number(e.target.value))}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
           >
-            <option value={1}>Single user</option>
-            <option value={2}>Two users</option>
-            <option value={3}>Three users</option>
+            <option value={1}>1 device</option>
+            <option value={2}>2 devices</option>
+            <option value={3}>3 devices</option>
           </select>
         </div>
 

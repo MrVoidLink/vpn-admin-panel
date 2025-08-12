@@ -21,6 +21,16 @@ const fmtDate = (v) => { const d = toDate(v); return d ? d.toLocaleString() : "�
 const diffDays = (f) => { const d = toDate(f); if (!d) return null; const ms = d - new Date(); return Math.ceil(ms / 86400000); };
 const fmtBytes = (n) => { const v = Number(n||0); if (Number.isNaN(v)) return "0 B"; if (v<1024) return `${v} B`; const u=["KB","MB","GB","TB"]; let i=-1,val=v; do{val/=1024;i++;}while(val>=1024&&i<u.length-1); return `${val.toFixed(1)} ${u[i]}`; };
 const safe = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+const daysLeft = (expiresAt) => {
+  const d = toDate(expiresAt);
+  if (!d) return null;
+  const diff = Math.ceil((d.getTime() - Date.now()) / 86400000);
+  return diff;
+};
+const isExpired = (expiresAt) => {
+  const d = toDate(expiresAt);
+  return d ? d.getTime() <= Date.now() : false;
+};
 
 // هدرهای ادمین: بدون کلید/اتورایز
 const buildAdminHeaders = async () => ({
@@ -32,6 +42,7 @@ const UserDetail = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(null);
   const [devices, setDevices] = useState([]);
+  const [code, setCode] = useState(null);
   const [loading, setLoading] = useState(true);
   const db = getFirestore(firebaseApp);
 
@@ -39,24 +50,35 @@ const UserDetail = () => {
     const fetchAll = async () => {
       setLoading(true);
       try {
+        // کاربر
         const userRef = doc(db, "users", id);
         const userSnap = await getDoc(userRef);
-        if (!userSnap.exists()) { setUser(null); setDevices([]); return; }
+        if (!userSnap.exists()) { setUser(null); setDevices([]); setCode(null); return; }
         const data = { uid: userSnap.id, ...userSnap.data() };
         setUser(data);
 
+        // دستگاه‌ها
         const devRef = collection(db, "users", id, "devices");
         const devSnap = await getDocs(devRef);
         const devs = devSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
         devs.sort((a,b) => ((toDate(b?.lastSeenAt)?.getTime()||0) - (toDate(a?.lastSeenAt)?.getTime()||0)));
         setDevices(devs);
+
+        // اگر کد فعالی دارد، سند کد را هم بخوان
+        if (data?.tokenId) {
+          const codeRef = doc(db, "codes", data.tokenId);
+          const codeSnap = await getDoc(codeRef);
+          setCode(codeSnap.exists() ? { id: codeSnap.id, ...codeSnap.data() } : null);
+        } else {
+          setCode(null);
+        }
       } catch (e) {
         console.error("خطا در دریافت کاربر/دستگاه‌ها:", e);
-        setUser(null); setDevices([]);
+        setUser(null); setDevices([]); setCode(null);
       } finally { setLoading(false); }
     };
     fetchAll();
-  }, [id]);
+  }, [id, db]);
 
   if (loading) return <div className="p-6">در حال بارگذاری...</div>;
   if (!user) return <div className="p-6 text-red-600">کاربر پیدا نشد.</div>;
@@ -220,6 +242,48 @@ const UserDetail = () => {
           <div><span className="font-semibold">Usage:</span> {fmtBytes(user?.stats?.totalBytes ?? 0)}</div>
           <div><span className="font-semibold">Last Server:</span> <span className="break-all">{safe(user?.stats?.lastServerId)}</span></div>
         </div>
+
+        {/* Subscription / Code Info (v2) */}
+        {user?.tokenId && (
+          <div className="bg-white shadow-md rounded-xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold">Subscription (Code)</h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div><span className="font-medium">Code ID:</span> <span className="break-all">{user.tokenId}</span></div>
+              <div><span className="font-medium">Type:</span> {code?.type || "—"}</div>
+              <div><span className="font-medium">Valid For:</span> {code?.validForDays ?? "—"} days</div>
+
+              <div><span className="font-medium">Max Devices:</span> {code?.maxDevices ?? "—"}</div>
+              <div><span className="font-medium">Active Devices:</span> {code?.activeDevices ?? 0}</div>
+              <div>
+                <span className="font-medium">Capacity:</span>{" "}
+                {(code?.activeDevices ?? 0)}/{code?.maxDevices ?? "—"}
+              </div>
+
+              <div><span className="font-medium">Activated At:</span> {fmtDate(code?.activatedAt)}</div>
+              <div><span className="font-medium">Expires At:</span> {fmtDate(code?.expiresAt)}</div>
+              <div><span className="font-medium">Days Left:</span> {daysLeft(code?.expiresAt) ?? "—"}</div>
+            </div>
+
+            {/* Status badges */}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {isExpired(code?.expiresAt) ? (
+                <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Expired</span>
+              ) : (
+                <span className="px-2 py-0.5 text-xs rounded-full bg-green-100 text-green-700">Active</span>
+              )}
+              {(code?.activeDevices ?? 0) >= (code?.maxDevices ?? Infinity) ? (
+                <span className="px-2 py-0.5 text-xs rounded-full bg-red-100 text-red-700">Capacity Full</span>
+              ) : (
+                <span className="px-2 py-0.5 text-xs rounded-full bg-amber-100 text-amber-700">
+                  {Math.max(0, (code?.maxDevices ?? 0) - (code?.activeDevices ?? 0))} slot(s) left
+                </span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Devices */}
         <div className="bg-white shadow-md rounded-xl p-6">

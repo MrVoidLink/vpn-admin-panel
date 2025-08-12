@@ -13,15 +13,15 @@ export default async function handler(req, res) {
   try {
     const {
       count = 10,
-      validForDays = 30,    // v2 only
-      maxDevices = 1,       // v2 only
+      validForDays = 30,   // v2
+      maxDevices = 1,      // v2
       type = "premium",
       source = "admin",
     } = req.query;
 
     const n = Number(count);
     const days = Number(validForDays);
-    const max = Number(maxDevices);
+    const max  = Number(maxDevices);
 
     const allowedDurations = [15, 30, 60, 90, 180, 365];
     const allowedTypes = ["premium", "gift"];
@@ -51,7 +51,7 @@ export default async function handler(req, res) {
         lastDeviceClaimedAt: null,
         lastDeviceReleasedAt: null,
       };
-
+      
       await db.collection("codes").doc(code).set(codeData);
       codes.push(codeData);
     }
