@@ -39,16 +39,18 @@ const GenerateCode = () => {
     }
   };
 
-  const handleGenerate = async ({ count, validForDays, deviceLimit, type }) => {
+  // ✅ هندلر سازگار با v2 (و بک‌کمپت با deviceLimit)
+  const handleGenerate = async ({ count, validForDays, maxDevices, deviceLimit, type }) => {
     try {
-      // برای سازگاری با بک‌اند فعلی، همان پارام‌های قبلی را می‌فرستیم:
+      const max = typeof maxDevices === "number" ? maxDevices : deviceLimit; // map قدیمی → جدید
+
+      // ارسال به API با کلیدهای اسکیمای جدید
       const res = await axios.get("/api/generate-code", {
         params: {
           count,
-          duration: validForDays,  // روزهای اعتبار
-          deviceLimit,             // ظرفیت دستگاه (در سرور به maxDevices نگاشت می‌شود)
+          validForDays, // v2
+          maxDevices: max, // v2
           type,
-          // اگر در آینده بخواهی منبع را از UI بدهی، اینجا: source
         },
       });
 
@@ -57,23 +59,21 @@ const GenerateCode = () => {
       const formattedTime = timestamp.toISOString().replace(/[:.]/g, "-");
       const filename = `codes-${type}-${formattedTime}.xlsx`;
 
-      // ستون‌های اکسل — با پشتیبانی از ساختار جدید و قدیمی
+      // ساخت شیت اکسل — فقط فیلدهای اسکیمای v2
       const worksheetData = generatedCodes.map((code) => {
-        const days = code.validForDays ?? code.duration ?? validForDays;
-        const maxDevices =
-          code.maxDevices ?? code.remainingDevices ?? code.deviceLimit ?? deviceLimit;
+        const days = code.validForDays ?? validForDays;
+        const mx = code.maxDevices ?? max;
         const activeDevices = code.activeDevices ?? 0;
         const source = code.source ?? "admin";
 
         return {
           Code: code.code,
           "Valid For (days)": days,
-          "Max Devices": maxDevices,
+          "Max Devices": mx,
           "Active Devices": activeDevices,
           Type: code.type,
           Source: source,
           "Created At": parseCreatedAt(code.createdAt),
-          "Used?": code.isUsed ? "Used" : "Unused",
         };
       });
 
@@ -86,13 +86,14 @@ const GenerateCode = () => {
       });
       saveAs(blob, filename);
 
-      // ذخیره‌ی متادیتا برای تاریخچه (سازگار با قدیم/جدید)
+      // ذخیره در تاریخچه فایل‌ها (هر دو کلید را برای سازگاری می‌فرستیم)
       await axios.post("/api/file-history", {
         name: filename,
         createdAt: timestamp.toISOString(),
         count,
         validForDays,
-        deviceLimit, // برای سازگاری تاریخچه، همون نام قدیمی حفظ می‌شه
+        maxDevices: max,     // v2
+        deviceLimit: max,    // برای بک‌کمپت اگر سرور هنوز deviceLimit می‌خواند
         type,
         codes: generatedCodes,
       });
@@ -100,6 +101,7 @@ const GenerateCode = () => {
       fetchHistory();
     } catch (error) {
       console.error("❌ API Error:", error);
+      // در صورت نیاز اینجا نوتیفیکیشن/Alert بگذار
     }
   };
 
