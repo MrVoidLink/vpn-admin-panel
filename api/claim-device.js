@@ -1,114 +1,113 @@
 // api/claim-device.js
+import { db } from "./firebase-admin.config.js";
 import admin from "firebase-admin";
-
-if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: process.env.FIREBASE_PROJECT_ID,
-      clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-    }),
-  });
-}
-const db = admin.firestore();
 
 export default async function handler(req, res) {
   try {
     if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
-    const { uid, codeId, deviceId, deviceInfo = {} } = req.body || {};
-    if (!uid || !codeId || !deviceId) {
-      return res.status(400).json({ error: "uid, codeId and deviceId are required" });
+    let body = req.body;
+    if (!body) {
+      try { body = await req.json?.(); } catch (_) {}
     }
+    const { uid, codeId, deviceId, deviceInfo = {} } = body || {};
+    if (!uid || !codeId || !deviceId) return res.status(400).json({ error: "uid, codeId, deviceId are required" });
 
     const codeRef = db.collection("codes").doc(codeId);
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
     const userDevRef = db.collection("users").doc(uid).collection("devices").doc(deviceId);
 
-    let result = { activeDevices: null, maxDevices: null };
-
-    await db.runTransaction(async (tx) => {
-      const [codeSnap, codeDevSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
+    const result = await db.runTransaction(async (tx) => {
+      const codeSnap = await tx.get(codeRef);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
-
       const code = codeSnap.data() || {};
-      const max = Number(code.maxDevices ?? code.remainingDevices ?? code.deviceLimit ?? 1);
-      const active = Number(code.activeDevices ?? 0);
-      result.maxDevices = max;
 
-      // اگر قبلاً همین دستگاه فعال بوده → ایدمپوتنت: فقط متادیتا آپدیت
-      if (codeDevSnap.exists && codeDevSnap.data()?.isActive) {
-        tx.update(codeDevRef, {
-          ...deviceInfo,
-          uid,
-          isActive: true,
-          active: true, // legacy sync
-          lastSeenAt: admin.firestore.Timestamp.now(),
-        });
-        tx.set(
-          userDevRef,
-          {
-            deviceId,
-            ...deviceInfo,
-            isActive: true,
-            active: true, // legacy sync
-            lastSeenAt: admin.firestore.Timestamp.now(),
-          },
-          { merge: true }
-        );
-        result.activeDevices = active;
-        return;
+      const deviceLimit = Number(code.deviceLimit ?? 0);
+      if (deviceLimit <= 0) throw new Error("INVALID_DEVICE_LIMIT");
+
+      // تاریخ‌ها
+      let activatedAt = code.activatedAt;
+      const now = admin.firestore.Timestamp.now();
+      if (!activatedAt) {
+        // احتیاط: اگر قبلش apply نشده باشه، همینجا ست می‌کنیم
+        activatedAt = now;
+        tx.update(codeRef, { activatedAt });
+      }
+      const expiresAt = admin.firestore.Timestamp.fromMillis(
+        activatedAt.toMillis() + Number(code.duration ?? 0) * 86400000
+      );
+      if (expiresAt.toMillis() < Date.now()) throw new Error("CODE_EXPIRED");
+
+      // وضعیت ظرفیت
+      const active = Number(code.activeDevices ?? 0);
+
+      // وضعیت دیوایس فعلی
+      const codeDevSnap = await tx.get(codeDevRef);
+      const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
+
+      // اگر همین دستگاه قبلاً active بوده، idempotent برگرد
+      if (wasActive) {
+        return {
+          activeDevices: active,
+          maxDevices: deviceLimit,
+          deviceId,
+          alreadyActive: true,
+        };
       }
 
-      // ظرفیت پر؟
-      if (active >= max) throw new Error("DEVICE_LIMIT_REACHED");
+      // اگر ظرفیت پر است، اجازه نده
+      if (active >= deviceLimit) {
+        throw new Error("DEVICE_LIMIT_REACHED");
+      }
 
-      // فعال‌سازی این دستگاه
-      const now = admin.firestore.Timestamp.now();
+      // فعال‌سازی دستگاه
       tx.set(
         codeDevRef,
         {
           uid,
-          deviceId,
-          ...deviceInfo,
           isActive: true,
-          active: true, // legacy sync
           claimedAt: now,
-          lastSeenAt: now,
+          platform: deviceInfo.platform || null,
+          model: deviceInfo.model || null,
+          appVersion: deviceInfo.appVersion || null,
         },
         { merge: true }
       );
 
       // افزایش شمارنده
       tx.update(codeRef, {
-        activeDevices: admin.firestore.FieldValue.increment(1),
-        isUsed: active + 1 >= max,
+        activeDevices: active + 1,
+        isUsed: active + 1 >= deviceLimit,
         lastDeviceClaimedAt: now,
       });
 
-      // آینه در پروفایل کاربر
+      // آینه‌ی زیر کاربر
       tx.set(
         userDevRef,
         {
           deviceId,
-          ...deviceInfo,
+          uid,
           isActive: true,
-          active: true, // legacy sync
+          platform: deviceInfo.platform || null,
+          model: deviceInfo.model || null,
+          appVersion: deviceInfo.appVersion || null,
           registeredAt: admin.firestore.FieldValue.serverTimestamp(),
           lastSeenAt: now,
         },
         { merge: true }
       );
 
-      result.activeDevices = active + 1;
+      return {
+        activeDevices: active + 1,
+        maxDevices: deviceLimit,
+        deviceId,
+        alreadyActive: false,
+      };
     });
 
     return res.status(200).json({ ok: true, ...result });
   } catch (e) {
-    const map = {
-      CODE_NOT_FOUND: 404,
-      DEVICE_LIMIT_REACHED: 409,
-    };
-    return res.status(map[e.message] || 500).json({ error: e.message || "INTERNAL" });
+    console.error("claim-device error:", e);
+    return res.status(400).json({ error: e.message || "BAD_REQUEST" });
   }
 }
