@@ -12,16 +12,13 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-// Fallback: در dev بدنه‌ی JSON را خودمان بخوانیم
+// read JSON body fallback (برای dev/ورسل)
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   return await new Promise((resolve) => {
     let data = '';
     req.on('data', (c) => (data += c));
-    req.on('end', () => {
-      try { resolve(JSON.parse(data || '{}')); }
-      catch { resolve({}); }
-    });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
   });
 }
@@ -31,10 +28,9 @@ export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    const body = await readJsonBody(req);
-    console.log('[admin-reset-user] body:', body);
+    const { uid, alsoRemoveRedemption = true } = await readJsonBody(req);
+    console.log('[admin-reset-user] body:', { uid, alsoRemoveRedemption });
 
-    const { uid, alsoRemoveRedemption = true } = body || {};
     if (!uid) return res.status(400).json({ error: 'uid is required' });
 
     const userRef = db.collection('users').doc(uid);
@@ -43,8 +39,8 @@ export default async function handler(req, res) {
 
     const user = userSnap.data() || {};
     const codeId = user.tokenId;
-    console.log('[admin-reset-user] tokenId:', codeId);
 
+    // اگر کاربر کد ندارد، فقط پروفایل/دستگاه‌های خودش ریست شود
     if (!codeId) {
       await userRef.update({
         planType: 'free',
@@ -68,13 +64,14 @@ export default async function handler(req, res) {
     const codeRef = db.collection('codes').doc(codeId);
     const devsRef = codeRef.collection('devices');
 
+    // همه دستگاه‌های فعال این کاربر روی این کد
     const activeByUserSnap = await devsRef
       .where('uid', '==', uid)
       .where('isActive', '==', true)
       .get();
     const activeCount = activeByUserSnap.size;
-    console.log('[admin-reset-user] activeByUser:', activeCount);
 
+    // تمام دستگاه‌های کاربر (برای آینه‌ی زیر users/{uid}/devices)
     const userDevsSnap = await userRef.collection('devices').get();
 
     await db.runTransaction(async (tx) => {
@@ -86,8 +83,13 @@ export default async function handler(req, res) {
       const max = Number(code.maxDevices ?? code.deviceLimit ?? 0);
       const now = admin.firestore.Timestamp.now();
 
+      // آزاد کردن دستگاه‌های کاربر روی این کد
       activeByUserSnap.docs.forEach((docSnap) => {
-        tx.set(devsRef.doc(docSnap.id), { isActive: false, active: false, releasedAt: now }, { merge: true });
+        tx.set(
+          devsRef.doc(docSnap.id),
+          { isActive: false, active: false, releasedAt: now },
+          { merge: true }
+        );
       });
 
       const newActive = Math.max(0, active - activeCount);
@@ -97,6 +99,7 @@ export default async function handler(req, res) {
         lastDeviceReleasedAt: now,
       });
 
+      // ریست پروفایل کاربر
       tx.update(userRef, {
         planType: 'free',
         subscription: admin.firestore.FieldValue.delete(),
@@ -104,10 +107,16 @@ export default async function handler(req, res) {
         status: 'active',
       });
 
+      // inactive کردن آینه‌ی دستگاه‌ها زیر users/{uid}
       userDevsSnap.docs.forEach((ud) => {
-        tx.set(userRef.collection('devices').doc(ud.id), { isActive: false, active: false, lastSeenAt: now }, { merge: true });
+        tx.set(
+          userRef.collection('devices').doc(ud.id),
+          { isActive: false, active: false, lastSeenAt: now },
+          { merge: true }
+        );
       });
 
+      // حذف redemption برای اجازه تست دوباره (اختیاری)
       if (alsoRemoveRedemption) {
         tx.delete(codeRef.collection('redemptions').doc(uid));
       }

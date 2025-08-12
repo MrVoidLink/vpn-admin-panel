@@ -12,16 +12,13 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-// Fallback: در dev بدنه‌ی JSON را خودمان بخوانیم
+// read JSON body fallback
 async function readJsonBody(req) {
   if (req.body && typeof req.body === 'object') return req.body;
   return await new Promise((resolve) => {
     let data = '';
     req.on('data', (c) => (data += c));
-    req.on('end', () => {
-      try { resolve(JSON.parse(data || '{}')); }
-      catch { resolve({}); }
-    });
+    req.on('end', () => { try { resolve(JSON.parse(data || '{}')); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
   });
 }
@@ -31,10 +28,9 @@ export default async function handler(req, res) {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    const body = await readJsonBody(req);
-    console.log('[admin-clear-code] body:', body);
+    const { codeId } = await readJsonBody(req);
+    console.log('[admin-clear-code] body:', { codeId });
 
-    const { codeId } = body || {};
     if (!codeId) return res.status(400).json({ error: 'codeId is required' });
 
     const codeRef = db.collection('codes').doc(codeId);
@@ -55,10 +51,20 @@ export default async function handler(req, res) {
 
       slice.forEach((d) => {
         const data = d.data() || {};
-        batch.set(devsRef.doc(d.id), { isActive: false, active: false, releasedAt: now }, { merge: true });
+        // زیر codes/{codeId}/devices
+        batch.set(
+          devsRef.doc(d.id),
+          { isActive: false, active: false, releasedAt: now },
+          { merge: true }
+        );
+        // آینه زیر users/{uid}/devices
         if (data.uid) {
           const userDevRef = db.collection('users').doc(data.uid).collection('devices').doc(d.id);
-          batch.set(userDevRef, { isActive: false, active: false, lastSeenAt: now }, { merge: true });
+          batch.set(
+            userDevRef,
+            { isActive: false, active: false, lastSeenAt: now },
+            { merge: true }
+          );
         }
       });
 
@@ -66,7 +72,12 @@ export default async function handler(req, res) {
       cleared += slice.length;
     }
 
-    await codeRef.update({ activeDevices: 0, isUsed: false, lastDeviceReleasedAt: now });
+    await codeRef.update({
+      activeDevices: 0,
+      isUsed: false,
+      lastDeviceReleasedAt: now,
+    });
+
     return res.status(200).json({ ok: true, clearedDevices: cleared });
   } catch (e) {
     console.error('admin-clear-code error:', e);
