@@ -1,12 +1,13 @@
 // api/admin-reset-user.js
-import admin from "firebase-admin";
+import 'dotenv/config';
+import admin from 'firebase-admin';
 
 if (!admin.apps.length) {
   admin.initializeApp({
     credential: admin.credential.cert({
       projectId: process.env.FIREBASE_PROJECT_ID,
       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
     }),
   });
 }
@@ -14,94 +15,105 @@ const db = admin.firestore();
 
 export default async function handler(req, res) {
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-    // ساده‌ترین محافظت: کلید ادمین
-    const adminKey = req.headers["x-admin-key"];
-    if (!process.env.ADMIN_API_KEY || adminKey !== process.env.ADMIN_API_KEY) {
-      return res.status(401).json({ error: "UNAUTHORIZED" });
-    }
+    // ⛔️ هیچ چک کلیدی وجود ندارد
 
     const { uid, alsoRemoveRedemption = true } = req.body || {};
-    if (!uid) return res.status(400).json({ error: "uid is required" });
+    if (!uid) return res.status(400).json({ error: 'uid is required' });
 
-    const userRef = db.collection("users").doc(uid);
+    const userRef = db.collection('users').doc(uid);
     const userSnap = await userRef.get();
-    if (!userSnap.exists) return res.status(404).json({ error: "USER_NOT_FOUND" });
+    if (!userSnap.exists) return res.status(404).json({ error: 'USER_NOT_FOUND' });
 
     const user = userSnap.data() || {};
     const codeId = user.tokenId;
+
+    // اگر کاربر کد ندارد، فقط پروفایل ریست می‌شود
     if (!codeId) {
-      // حتی اگر کاربر کدی نداشته باشد، می‌توانیم فقط اشتراک را ریست کنیم
       await userRef.update({
-        planType: "free",
+        planType: 'free',
         subscription: admin.firestore.FieldValue.delete(),
         tokenId: admin.firestore.FieldValue.delete(),
+        status: 'active',
       });
-      return res.status(200).json({ ok: true, clearedDevices: 0, message: "User had no tokenId; subscription reset." });
+      const now = admin.firestore.Timestamp.now();
+      const udevs = await userRef.collection('devices').get();
+      await Promise.all(
+        udevs.docs.map((d) =>
+          userRef.collection('devices').doc(d.id).set(
+            { isActive: false, active: false, lastSeenAt: now },
+            { merge: true }
+          )
+        )
+      );
+      return res.status(200).json({ ok: true, clearedDevices: 0 });
     }
 
-    const codeRef = db.collection("codes").doc(codeId);
-    const devsRef = codeRef.collection("devices");
+    const codeRef = db.collection('codes').doc(codeId);
+    const devsRef = codeRef.collection('devices');
 
-    // همهٔ deviceهایی که توسط همین uid روی این کد فعال هستند
-    const activeByUserSnap = await devsRef.where("uid", "==", uid).where("isActive", "==", true).get();
+    // همه دستگاه‌های فعال این کاربر روی این کد
+    const activeByUserSnap = await devsRef
+      .where('uid', '==', uid)
+      .where('isActive', '==', true)
+      .get();
     const activeCount = activeByUserSnap.size;
 
+    // دستگاه‌های کاربر (برای آینه)
+    const userDevsSnap = await userRef.collection('devices').get();
+
     await db.runTransaction(async (tx) => {
-      const [codeSnap] = await Promise.all([tx.get(codeRef)]);
-      if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
+      const codeSnap = await tx.get(codeRef);
+      if (!codeSnap.exists) throw new Error('CODE_NOT_FOUND');
+
       const code = codeSnap.data() || {};
       const active = Number(code.activeDevices ?? 0);
-      const max = Number(code.maxDevices ?? 0);
+      const max = Number(code.maxDevices ?? code.deviceLimit ?? 0);
+      const now = admin.firestore.Timestamp.now();
 
-      // آزاد کردن همهٔ دستگاه‌های این کاربر زیر این کد
+      // آزاد کردن دستگاه‌های کاربر
       activeByUserSnap.docs.forEach((docSnap) => {
-        const dref = devsRef.doc(docSnap.id);
-        tx.update(dref, {
-          isActive: false,
-          active: false,
-          releasedAt: admin.firestore.Timestamp.now(),
-        });
+        tx.set(
+          devsRef.doc(docSnap.id),
+          { isActive: false, active: false, releasedAt: now },
+          { merge: true }
+        );
       });
 
       const newActive = Math.max(0, active - activeCount);
       tx.update(codeRef, {
         activeDevices: newActive,
         isUsed: newActive >= max,
-        lastDeviceReleasedAt: admin.firestore.Timestamp.now(),
+        lastDeviceReleasedAt: now,
       });
 
-      // ریست کاربر
+      // ریست پروفایل کاربر
       tx.update(userRef, {
-        planType: "free",
+        planType: 'free',
         subscription: admin.firestore.FieldValue.delete(),
         tokenId: admin.firestore.FieldValue.delete(),
-        status: "active",
+        status: 'active',
       });
 
-      // آینهٔ دستگاه‌ها در پروفایل کاربر
-      const userDevsRef = userRef.collection("devices");
-      const userDevsSnap = await userDevsRef.get();
+      // آینه‌ی devices زیر users/{uid}
       userDevsSnap.docs.forEach((ud) => {
         tx.set(
-          userDevsRef.doc(ud.id),
-          { isActive: false, active: false, lastSeenAt: admin.firestore.Timestamp.now() },
+          userRef.collection('devices').doc(ud.id),
+          { isActive: false, active: false, lastSeenAt: now },
           { merge: true }
         );
       });
 
       // حذف redemption برای تست مجدد (اختیاری)
       if (alsoRemoveRedemption) {
-        const redRef = codeRef.collection("redemptions").doc(uid);
-        tx.delete(redRef);
+        tx.delete(codeRef.collection('redemptions').doc(uid));
       }
     });
 
     return res.status(200).json({ ok: true, clearedDevices: activeCount, codeId });
   } catch (e) {
-    console.error(e);
-    const map = { CODE_NOT_FOUND: 404 };
-    return res.status(map[e.message] || 500).json({ error: e.message || "INTERNAL" });
+    console.error('admin-reset-user error:', e);
+    return res.status(500).json({ error: e.message || 'INTERNAL' });
   }
 }

@@ -5,6 +5,8 @@ import { getFirestore, doc, getDoc, collection, getDocs } from "firebase/firesto
 import firebaseApp from "../../firebase/firebaseConfig";
 
 // helpers
+const IS_PROD = import.meta.env.MODE === "production";
+
 const isTimestamp = (v) => v && typeof v === "object" && ("seconds" in v || "toDate" in v);
 const toDate = (v) => {
   try {
@@ -19,6 +21,10 @@ const fmtDate = (v) => { const d = toDate(v); return d ? d.toLocaleString() : "�
 const diffDays = (f) => { const d = toDate(f); if (!d) return null; const ms = d - new Date(); return Math.ceil(ms / 86400000); };
 const fmtBytes = (n) => { const v = Number(n||0); if (Number.isNaN(v)) return "0 B"; if (v<1024) return `${v} B`; const u=["KB","MB","GB","TB"]; let i=-1,val=v; do{val/=1024;i++;}while(val>=1024&&i<u.length-1); return `${val.toFixed(1)} ${u[i]}`; };
 const safe = (v) => (v === undefined || v === null || v === "" ? "—" : v);
+
+// هدرهای ادمین: در پروداکشن کلید می‌پرسیم، در Dev لازم نیست
+const buildAdminHeaders = async () => ({ "Content-Type": "application/json" });
+;
 
 const UserDetail = () => {
   const { id } = useParams();
@@ -67,9 +73,9 @@ const UserDetail = () => {
             <p className="text-gray-500 text-sm break-all">UID: {user.uid}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {import.meta.env.DEV && user && (
+            {/* دکمه‌های تست فقط در Dev */}
+            {!IS_PROD && user && (
               <>
-                {/* Apply Token */}
                 <button
                   onClick={async () => {
                     const codeId = prompt("Enter codeId to apply:");
@@ -80,7 +86,7 @@ const UserDetail = () => {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ uid: user.uid, codeId }),
                       });
-                      let data = null; try { data = await r.json(); } catch(_) {}
+                      let data=null; try{ data=await r.json(); }catch(_){}
                       if (!r.ok) return alert(`Failed: ${data?.error || r.status}`);
                       alert("Applied!"); window.location.reload();
                     } catch (e) { console.error(e); alert("Request failed"); }
@@ -88,7 +94,6 @@ const UserDetail = () => {
                   className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
                 >Apply Token (DEV)</button>
 
-                {/* Claim */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
@@ -103,7 +108,7 @@ const UserDetail = () => {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ uid: user.uid, codeId: user.tokenId, deviceId, deviceInfo: { platform, model, appVersion } }),
                       });
-                      let data = null; try { data = await r.json(); } catch(_) {}
+                      let data=null; try{ data=await r.json(); }catch(_){}
                       if (!r.ok) return alert(`CLAIM failed: ${data?.error || r.status}`);
                       alert(`CLAIM ok (${data.activeDevices}/${data.maxDevices} active)`);
                     } catch (e) { console.error(e); alert("CLAIM request failed"); }
@@ -111,7 +116,6 @@ const UserDetail = () => {
                   className="text-sm bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700"
                 >Claim Device (DEV)</button>
 
-                {/* Release */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
@@ -123,60 +127,59 @@ const UserDetail = () => {
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({ uid: user.uid, codeId: user.tokenId, deviceId }),
                       });
-                      let data = null; try { data = await r.json(); } catch(_) {}
+                      let data=null; try{ data=await r.json(); }catch(_){}
                       if (!r.ok) return alert(`RELEASE failed: ${data?.error || r.status}`);
                       alert(`RELEASE ok (${data.activeDevices}/${data.maxDevices} active)`);
                     } catch (e) { console.error(e); alert("RELEASE request failed"); }
                   }}
                   className="text-sm bg-amber-600 text-white px-3 py-1 rounded hover:bg-amber-700"
                 >Release Device (DEV)</button>
-
-                {/* Admin: Reset user */}
-                <button
-                  onClick={async () => {
-                    if (!user.uid) return alert("UID نداریم!");
-                    const key = prompt("Enter ADMIN_API_KEY:");
-                    if (!key) return;
-                    try {
-                      const r = await fetch("/api/admin-reset-user", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", "x-admin-key": key },
-                        body: JSON.stringify({ uid: user.uid, alsoRemoveRedemption: true }),
-                      });
-                      let data=null; try{ data=await r.json(); }catch(_){}
-                      if (!r.ok) return alert(`RESET failed: ${data?.error || r.status}`);
-                      alert(`User reset OK (cleared ${data?.clearedDevices ?? 0} devices)`); 
-                      window.location.reload();
-                    } catch (e) {
-                      console.error(e); alert("RESET request failed");
-                    }
-                  }}
-                  className="text-sm bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
-                >Reset User (DEV)</button>
-
-                {/* Admin: Clear all devices of a code */}
-                <button
-                  onClick={async () => {
-                    if (!user.tokenId) return alert("tokenId نداریم (اول Apply Token)!");
-                    const key = prompt("Enter ADMIN_API_KEY:");
-                    if (!key) return;
-                    try {
-                      const r = await fetch("/api/admin-clear-code", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json", "x-admin-key": key },
-                        body: JSON.stringify({ codeId: user.tokenId }),
-                      });
-                      let data=null; try{ data=await r.json(); }catch(_){}
-                      if (!r.ok) return alert(`CLEAR failed: ${data?.error || r.status}`);
-                      alert(`Code cleared OK (devices affected: ${data?.clearedDevices ?? 0})`);
-                    } catch (e) {
-                      console.error(e); alert("CLEAR request failed");
-                    }
-                  }}
-                  className="text-sm bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
-                >Clear Code (DEV)</button>
               </>
             )}
+
+            {/* دکمه‌های ادمین: همیشه نمایش داده شوند */}
+            <button
+              onClick={async () => {
+                try {
+                  const headers = await buildAdminHeaders();
+                  const r = await fetch("/api/admin-reset-user", {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ uid: user.uid, alsoRemoveRedemption: true }),
+                  });
+                  let data=null; try{ data=await r.json(); }catch(_){}
+                  if (!r.ok) return alert(`RESET failed: ${data?.error || r.status}`);
+                  alert(`User reset OK (cleared ${data?.clearedDevices ?? 0} devices)`);
+                  window.location.reload();
+                } catch (e) {
+                  if (e.message === "NO_ADMIN_KEY") return;
+                  console.error(e); alert("RESET request failed");
+                }
+              }}
+              className="text-sm bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700"
+            >Reset User</button>
+
+            <button
+              onClick={async () => {
+                if (!user.tokenId) return alert("tokenId نداریم (اول Apply Token)!");
+                try {
+                  const headers = await buildAdminHeaders();
+                  const r = await fetch("/api/admin-clear-code", {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ codeId: user.tokenId }),
+                  });
+                  let data=null; try{ data=await r.json(); }catch(_){}
+                  if (!r.ok) return alert(`CLEAR failed: ${data?.error || r.status}`);
+                  alert(`Code cleared OK (devices affected: ${data?.clearedDevices ?? 0})`);
+                } catch (e) {
+                  if (e.message === "NO_ADMIN_KEY") return;
+                  console.error(e); alert("CLEAR request failed");
+                }
+              }}
+              className="text-sm bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-700"
+            >Clear Code</button>
+
             <button
               onClick={() => navigate("/admin/users")}
               className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
