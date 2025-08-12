@@ -130,14 +130,17 @@ const UserDetail = () => {
                   const codeId = prompt("Enter codeId to apply:");
                   if (!codeId) return;
                   try {
-                    const r = await fetch("/api/apply-token", {
+                    const r = await fetch(`/api/apply-token`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({ uid: user.uid, codeId }),
                     });
-                    const data = await r.json();
+
+                    let data = null;
+                    try { data = await r.json(); } catch (_) {}
+
                     if (!r.ok) {
-                      alert(`Failed: ${data.error || r.status}`);
+                      alert(`Failed: ${data?.error || r.status}`);
                       return;
                     }
                     alert("Applied!");
