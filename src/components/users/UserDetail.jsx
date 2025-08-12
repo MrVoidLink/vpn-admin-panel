@@ -89,7 +89,7 @@ const UserDetail = () => {
         const devRef = collection(db, "users", id, "devices");
         const devSnap = await getDocs(devRef);
         const devs = devSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        // مرتب‌سازی بر اساس lastSeenAt نزولی
+        // sort by lastSeenAt desc
         devs.sort((a, b) => {
           const ad = toDate(a?.lastSeenAt)?.getTime() || 0;
           const bd = toDate(b?.lastSeenAt)?.getTime() || 0;
@@ -118,24 +118,55 @@ const UserDetail = () => {
     <div className="p-6 min-h-screen bg-gray-50">
       <div className="max-w-5xl mx-auto space-y-6">
         {/* Header */}
-        <div className="bg-white shadow-md rounded-xl p-6 flex items-center justify-between">
+        <div className="bg-white shadow-md rounded-xl p-6 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-bold text-gray-800">User Details</h2>
             <p className="text-gray-500 text-sm break-all">UID: {user.uid}</p>
           </div>
-          <button
-            onClick={() => navigate("/admin/users")}
-            className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
-          >
-            ← بازگشت به لیست کاربران
-          </button>
+          <div className="flex items-center gap-2">
+            {import.meta.env.DEV && user && (
+              <button
+                onClick={async () => {
+                  const codeId = prompt("Enter codeId to apply:");
+                  if (!codeId) return;
+                  try {
+                    const r = await fetch("/api/apply-token", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ uid: user.uid, codeId }),
+                    });
+                    const data = await r.json();
+                    if (!r.ok) {
+                      alert(`Failed: ${data.error || r.status}`);
+                      return;
+                    }
+                    alert("Applied!");
+                    window.location.reload();
+                  } catch (e) {
+                    alert("Request failed");
+                    console.error(e);
+                  }
+                }}
+                className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
+              >
+                Apply Token (DEV)
+              </button>
+            )}
+            <button
+              onClick={() => navigate("/admin/users")}
+              className="text-sm bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded"
+            >
+              ← بازگشت به لیست کاربران
+            </button>
+          </div>
         </div>
 
         {/* Summary */}
         <div className="bg-white shadow-md rounded-xl p-6 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-gray-700">
           <div><span className="font-semibold">Plan:</span> {safe(user?.planType)}</div>
           <div><span className="font-semibold">Language:</span> {safe(user?.language)}</div>
-          <div><span className="font-semibold">Status:</span>{" "}
+          <div>
+            <span className="font-semibold">Status:</span>{" "}
             <span
               className={`px-2 py-0.5 text-xs font-medium rounded-full ${
                 user?.status === "active"
