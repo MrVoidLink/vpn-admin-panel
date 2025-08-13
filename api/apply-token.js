@@ -1,7 +1,7 @@
 // api/apply-token.js
 import { db } from "./firebase-admin.config.js";
-import { Timestamp } from "firebase-admin/firestore";
 import admin from "firebase-admin";
+const { Timestamp, FieldValue } = admin.firestore;
 
 // بدنه‌ی درخواست را مطمئن بخوان (vercel dev / vite proxy)
 async function readJsonBody(req) {
@@ -31,7 +31,8 @@ export default async function handler(req, res) {
 
     const code = codeSnap.data() || {};
     const validForDays = Number(code.validForDays ?? 0);
-    const maxDevices  = Number(code.maxDevices ?? 0);
+    // fallback به deviceLimit برای سازگاری با اسکیمای قدیمی
+    const maxDevices  = Number(code.maxDevices ?? code.deviceLimit ?? 0);
     const type        = code.type || "premium";
     if (!validForDays || !maxDevices) return res.status(400).json({ error: "INVALID_CODE_META" });
 
@@ -44,9 +45,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "CODE_EXPIRED" });
     }
 
-    // حالت ۱: فقط Apply (وقتی deviceId نداریم)
+    // حالت ۱: فقط Apply (بدون deviceId)
     if (!deviceId) {
       await db.runTransaction(async (tx) => {
+        // فقط write داریم، read دیگری جز codeRef نداریم
         tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
         tx.set(
           userRef,
@@ -58,7 +60,7 @@ export default async function handler(req, res) {
           },
           { merge: true }
         );
-        tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now });
+        tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
       });
 
       return res.status(200).json({
@@ -72,17 +74,50 @@ export default async function handler(req, res) {
       });
     }
 
-    // حالت ۲: Apply + Auto‑Claim (وقتی deviceId داریم)
+    // حالت ۲: Apply + Auto‑Claim (با deviceId)
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
     const userDevRef = userRef.collection("devices").doc(deviceId);
 
     const result = await db.runTransaction(async (tx) => {
-      const freshCodeSnap = await tx.get(codeRef);
+      // ✅ همهٔ READها قبل از هر WRITE
+      const [freshCodeSnap, codeDevSnap] = await Promise.all([
+        tx.get(codeRef),
+        tx.get(codeDevRef),
+      ]);
       if (!freshCodeSnap.exists) throw new Error("CODE_NOT_FOUND");
       const freshCode = freshCodeSnap.data() || {};
-      const active = Number(freshCode.activeDevices ?? 0);
 
-      // همیشه Apply را تثبیت کن
+      const active = Number(freshCode.activeDevices ?? 0);
+      const source = freshCode.source || "admin";
+
+      // ظرفیت پر؟
+      if (active >= maxDevices) {
+        // حتی در capacity full هم اجازهٔ write نمی‌دیم تا قانون Firestore حفظ شود
+        return { mode: "APPLY_ONLY_CAPACITY_FULL", activeDevices: active, maxDevices, alreadyActive: false };
+      }
+
+      // آیا همین device قبلاً active بوده؟
+      const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
+      if (wasActive) {
+        // در حالت already active هم فقط همگام‌سازی متادیتا (write بعد از read)
+        tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
+        tx.set(
+          userRef,
+          {
+            tokenId: codeId,
+            planType: type === "gift" ? "gift" : "premium",
+            status: "active",
+            subscription: { source, codeId, expiresAt },
+          },
+          { merge: true }
+        );
+        tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
+
+        return { mode: "APPLY_AND_ALREADY_ACTIVE", activeDevices: active, maxDevices, alreadyActive: true };
+      }
+
+      // ✅ از اینجا به بعد WRITEها
+      // تثبیت Apply
       tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
       tx.set(
         userRef,
@@ -90,26 +125,14 @@ export default async function handler(req, res) {
           tokenId: codeId,
           planType: type === "gift" ? "gift" : "premium",
           status: "active",
-          subscription: { source: freshCode.source || "admin", codeId, expiresAt },
+          subscription: { source, codeId, expiresAt },
         },
         { merge: true }
       );
-      tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now });
-
-      // ظرفیت پر؟
-      if (active >= maxDevices) {
-        return { mode: "APPLY_ONLY_CAPACITY_FULL", activeDevices: active, maxDevices, alreadyActive: false };
-      }
-
-      // اگر این device قبلاً active بوده
-      const codeDevSnap = await tx.get(codeDevRef);
-      const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
-      if (wasActive) {
-        return { mode: "APPLY_AND_ALREADY_ACTIVE", activeDevices: active, maxDevices, alreadyActive: true };
-      }
+      tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
 
       // Claim دستگاه
-      const nowAdmin = admin.firestore.Timestamp.now();
+      const nowAdmin = Timestamp.now();
       tx.set(
         codeDevRef,
         {
@@ -131,7 +154,7 @@ export default async function handler(req, res) {
           platform: deviceInfo.platform || null,
           model: deviceInfo.model || null,
           appVersion: deviceInfo.appVersion || null,
-          registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+          registeredAt: FieldValue.serverTimestamp(),
           lastSeenAt: nowAdmin,
         },
         { merge: true }
