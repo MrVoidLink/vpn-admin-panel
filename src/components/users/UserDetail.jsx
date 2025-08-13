@@ -99,6 +99,7 @@ const UserDetail = () => {
             {/* دکمه‌های تست فقط در Dev */}
             {!IS_PROD && user && (
               <>
+                {/* Apply only */}
                 <button
                   onClick={async () => {
                     const codeId = prompt("Enter codeId to apply:");
@@ -111,12 +112,54 @@ const UserDetail = () => {
                       });
                       let data=null; try{ data=await r.json(); }catch(_){}
                       if (!r.ok) return alert(`Failed: ${data?.error || r.status}`);
-                      alert("Applied!"); window.location.reload();
+                      alert("Applied!");
+                      window.location.reload();
                     } catch (e) { console.error(e); alert("Request failed"); }
                   }}
                   className="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700"
                 >Apply Token (DEV)</button>
 
+                {/* Apply + Claim */}
+                <button
+                  onClick={async () => {
+                    const codeId = prompt("Enter codeId to apply & claim:");
+                    if (!codeId) return;
+                    const deviceId = prompt("Enter deviceId to CLAIM (same request):");
+                    if (!deviceId) return;
+                    const platform = user.platform || "android";
+                    const model = user.deviceModel || "";
+                    const appVersion = user.appVersion || "";
+                    try {
+                      const r = await fetch(`/api/apply-token`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          uid: user.uid,
+                          codeId,
+                          deviceId,
+                          deviceInfo: { platform, model, appVersion },
+                        }),
+                      });
+                      let data=null; try{ data=await r.json(); }catch(_){}
+                      if (!r.ok) return alert(`Failed: ${data?.error || r.status}`);
+
+                      if (data.mode === "APPLY_AND_CLAIMED") {
+                        alert(`Applied & Claimed ✅ (${data.activeDevices}/${data.maxDevices} active)`);
+                      } else if (data.mode === "APPLY_AND_ALREADY_ACTIVE") {
+                        alert(`Already active on this device ✅ (${data.activeDevices}/${data.maxDevices})`);
+                      } else if (data.mode === "APPLY_ONLY_CAPACITY_FULL") {
+                        alert(`Applied but capacity full ⚠️ (${data.activeDevices}/${data.maxDevices})`);
+                      } else {
+                        alert(`Applied only ✅`);
+                      }
+
+                      window.location.reload();
+                    } catch (e) { console.error(e); alert("Request failed"); }
+                  }}
+                  className="text-sm bg-indigo-600 text-white px-3 py-1 rounded hover:bg-indigo-700"
+                >Apply + Claim (DEV)</button>
+
+                {/* Claim only */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
@@ -139,6 +182,7 @@ const UserDetail = () => {
                   className="text-sm bg-emerald-600 text-white px-3 py-1 rounded hover:bg-emerald-700"
                 >Claim Device (DEV)</button>
 
+                {/* Release */}
                 <button
                   onClick={async () => {
                     if (!user.tokenId) return alert("اول Apply Token انجام بده؛ tokenId نداریم.");
