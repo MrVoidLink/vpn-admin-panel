@@ -25,7 +25,10 @@ export default async function handler(req, res) {
 
       const maxDevices = Number(code.maxDevices ?? 0);
       const active = Number(code.activeDevices ?? 0);
-      const wasActive = devSnap.exists && !!(devSnap.data() || {}).isActive;
+
+      const devData = (devSnap.data() || {});
+      // ✅ سازگار با دو مدل ذخیره‌سازی: isActive=true یا status='active'
+      const wasActive = devSnap.exists && (devData.isActive === true || devData.status === "active");
 
       // idempotent: اگر قبلاً آزاد بوده
       if (!wasActive) {
@@ -39,7 +42,11 @@ export default async function handler(req, res) {
       }
 
       // آزاد کردن زیر codes/{codeId}/devices
-      tx.set(codeDevRef, { isActive: false, releasedAt: now }, { merge: true });
+      tx.set(
+        codeDevRef,
+        { isActive: false, status: "released", releasedAt: now },
+        { merge: true }
+      );
 
       // کاهش شمارنده و ثبت تاریخ
       const newActive = Math.max(0, active - 1);
@@ -50,7 +57,11 @@ export default async function handler(req, res) {
       });
 
       // آینه در users/{uid}/devices
-      tx.set(userDevRef, { isActive: false, lastSeenAt: now }, { merge: true });
+      tx.set(
+        userDevRef,
+        { isActive: false, status: "released", lastSeenAt: now },
+        { merge: true }
+      );
 
       return {
         activeDevices: newActive,
