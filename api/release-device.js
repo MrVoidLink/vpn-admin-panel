@@ -14,7 +14,14 @@ export default async function handler(req, res) {
 
     const codeRef = db.collection("codes").doc(codeId);
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
-    const userDevRef = db.collection("users").doc(uid).collection("devices").doc(deviceId);
+
+    // 🔧 DocID صحیح برای users/{uid}/devices:
+    // اگر deviceId به‌صورت `${uid}_${deviceId}` آمد، بخش بعد از `${uid}_` را بردار.
+    const userDeviceId = deviceId.startsWith(`${uid}_`)
+      ? deviceId.slice(uid.length + 1)
+      : deviceId;
+
+    const userDevRef = db.collection("users").doc(uid).collection("devices").doc(userDeviceId);
 
     const result = await db.runTransaction(async (tx) => {
       const [codeSnap, devSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
@@ -27,10 +34,10 @@ export default async function handler(req, res) {
       const active = Number(code.activeDevices ?? 0);
 
       const devData = (devSnap.data() || {});
-      // ✅ سازگار با دو مدل ذخیره‌سازی: isActive=true یا status='active'
+      // هر دو مدل ذخیره‌سازی را پشتیبانی کن
       const wasActive = devSnap.exists && (devData.isActive === true || devData.status === "active");
 
-      // idempotent: اگر قبلاً آزاد بوده
+      // idempotent
       if (!wasActive) {
         return {
           activeDevices: Math.max(0, active),
@@ -53,10 +60,10 @@ export default async function handler(req, res) {
       tx.update(codeRef, {
         activeDevices: newActive,
         lastDeviceReleasedAt: now,
-        maxDevices, // همسوسازی متادیتا برای UI
+        maxDevices,
       });
 
-      // آینه در users/{uid}/devices
+      // آینه در users/{uid}/devices — با DocID صحیح
       tx.set(
         userDevRef,
         { isActive: false, status: "released", lastSeenAt: now },
