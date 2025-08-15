@@ -13,52 +13,19 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "uid, codeId, deviceId are required" });
 
     const codeRef = db.collection("codes").doc(codeId);
-
-    // ---------- پیدا کردن DocID صحیح زیر codes/{codeId}/devices ----------
-    let finalDeviceDocId = deviceId; // ابتدا همینی که آمده
-    const tryIds = [deviceId, `${uid}_${deviceId}`];
-
-    // سعی کن سریع با get پیدا کنی
-    let codeDevRef = codeRef.collection("devices").doc(tryIds[0]);
-    let devSnap = await codeDevRef.get();
-
-    if (!devSnap.exists) {
-      codeDevRef = codeRef.collection("devices").doc(tryIds[1]);
-      devSnap = await codeDevRef.get();
-      if (devSnap.exists) finalDeviceDocId = tryIds[1];
-    }
-
-    // اگر باز هم پیدا نشد، یک fallback-query (برای سازگاری با نسخه‌های خیلی قدیمی)
-    if (!devSnap.exists) {
-      const byDeviceId = await codeRef.collection("devices").where("deviceId", "==", deviceId).limit(1).get();
-      if (!byDeviceId.empty) {
-        finalDeviceDocId = byDeviceId.docs[0].id;
-        codeDevRef = codeRef.collection("devices").doc(finalDeviceDocId);
-        devSnap = byDeviceId.docs[0];
-      } else {
-        const byUid = await codeRef.collection("devices").where("uid", "==", uid).limit(5).get();
-        if (!byUid.empty) {
-          // اگر چندتا بود، نزدیک‌ترین به الگوی `${uid}_${deviceId}` را انتخاب کن
-          const candidate = byUid.docs.find(d => d.id === `${uid}_${deviceId}`) || byUid.docs[0];
-          finalDeviceDocId = candidate.id;
-          codeDevRef = codeRef.collection("devices").doc(finalDeviceDocId);
-          devSnap = candidate;
-        }
-      }
-    }
-    // ---------------------------------------------------------------
+    const codeDevRef = codeRef.collection("devices").doc(deviceId);
 
     // DocID صحیح برای users/{uid}/devices
-    const userDeviceId = finalDeviceDocId.startsWith(`${uid}_`)
-      ? finalDeviceDocId.slice(uid.length + 1)
+    const userDeviceId = deviceId.startsWith(`${uid}_`)
+      ? deviceId.slice(uid.length + 1)
       : deviceId;
 
     const userRef = db.collection("users").doc(uid);
     const userDevRef = userRef.collection("devices").doc(userDeviceId);
 
-    // 1) عملیات اصلی داخل ترنزاکشن
+    // 1) عملیات اصلی داخل ترنزاکشن (بدون query روی کالکشن‌ها)
     const txResult = await db.runTransaction(async (tx) => {
-      const codeSnap = await tx.get(codeRef);
+      const [codeSnap, devSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
 
       const code = codeSnap.data() || {};
@@ -67,28 +34,34 @@ export default async function handler(req, res) {
       const maxDevices = Number(code.maxDevices ?? 0);
       const active = Number(code.activeDevices ?? 0);
 
-      let wasActive = false;
-      if (devSnap && devSnap.exists) {
-        const devData = devSnap.data() || {};
-        const status = String(devData.status || "");
-        const isActive = devData.isActive === true || devData.isActive === undefined;
-        wasActive = (status === "active" || status === "") && isActive;
+      const devData = (devSnap.data() || {});
+      const wasActive =
+        devSnap.exists && (devData.isActive === true || devData.status === "active");
 
-        // ⬇️ غیرفعال کن (یا می‌تونی delete کنی)
-        tx.set(
-          codeDevRef,
-          { isActive: false, status: "released", releasedAt: now },
-          { merge: true }
-        );
-
-        if (wasActive) {
-          tx.set(codeRef, {
-            activeDevices: admin.firestore.FieldValue.increment(-1),
-            lastDeviceReleasedAt: now,
-            maxDevices,
-          }, { merge: true });
-        }
+      if (!wasActive) {
+        // idempotent — اگر از قبل آزاد شده بود
+        return {
+          activeDevices: Math.max(0, active),
+          maxDevices,
+          deviceId,
+          alreadyReleased: true,
+        };
       }
+
+      // آزاد کردن در codes/{codeId}/devices/{deviceId}
+      tx.set(
+        codeDevRef,
+        { isActive: false, status: "released", releasedAt: now },
+        { merge: true }
+      );
+
+      // کم‌کردن شمارنده روی خود سند کُد (اطلاعات کُد حفظ می‌شود)
+      const newActive = Math.max(0, active - 1);
+      tx.update(codeRef, {
+        activeDevices: newActive,
+        lastDeviceReleasedAt: now,
+        maxDevices,
+      });
 
       // آینه در users/{uid}/devices/{userDeviceId}
       tx.set(
@@ -98,13 +71,15 @@ export default async function handler(req, res) {
       );
 
       return {
-        deviceId: finalDeviceDocId,
-        alreadyReleased: !wasActive,
+        activeDevices: newActive,
         maxDevices,
+        deviceId,
+        alreadyReleased: false,
       };
     });
 
-    // 2) بیرون از ترنزاکشن: اگر دیگر هیچ دستگاه فعالی نمانده، کاربر free شود
+    // 2) بیرون از ترنزاکشن: فقط برای همین uid بررسی کن
+    // اگر هیچ device فعالی برای این کاربر نمانده بود، فیلدهای اشتراک را پاک کن و پلن را free کن.
     const activeLeftSnap = await userRef
       .collection("devices")
       .where("isActive", "==", true)
@@ -118,7 +93,12 @@ export default async function handler(req, res) {
           planType: "free",
           status: "free",
           source: "system",
-          plan: { type: "free", status: "free", source: "system" },
+          plan: {
+            type: "free",
+            status: "free",
+            source: "system",
+          },
+          // پاک‌کردن فقط فیلدهای اشتراکِ همین کاربر
           currentCode: admin.firestore.FieldValue.delete(),
           codeId: admin.firestore.FieldValue.delete(),
           tokenId: admin.firestore.FieldValue.delete(),
@@ -126,6 +106,7 @@ export default async function handler(req, res) {
           expiresAt: admin.firestore.FieldValue.delete(),
           maxDevices: admin.firestore.FieldValue.delete(),
           validForDays: admin.firestore.FieldValue.delete(),
+
           lastSeenAt: admin.firestore.Timestamp.now(),
         },
         { merge: true }
@@ -133,6 +114,7 @@ export default async function handler(req, res) {
       userDowngraded = true;
     }
 
+    // خروجی
     return res.status(200).json({ ok: true, ...txResult, userDowngraded });
   } catch (e) {
     console.error("release-device error:", e);
