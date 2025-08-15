@@ -15,15 +15,16 @@ export default async function handler(req, res) {
     const codeRef = db.collection("codes").doc(codeId);
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
 
-    // 🔧 DocID صحیح برای users/{uid}/devices:
-    // اگر deviceId به‌صورت `${uid}_${deviceId}` آمد، بخش بعد از `${uid}_` را بردار.
+    // DocID صحیح برای users/{uid}/devices
     const userDeviceId = deviceId.startsWith(`${uid}_`)
       ? deviceId.slice(uid.length + 1)
       : deviceId;
 
-    const userDevRef = db.collection("users").doc(uid).collection("devices").doc(userDeviceId);
+    const userRef = db.collection("users").doc(uid);
+    const userDevRef = userRef.collection("devices").doc(userDeviceId);
 
-    const result = await db.runTransaction(async (tx) => {
+    // 1) فقط عملیات اصلی داخل ترنزاکشن
+    const txResult = await db.runTransaction(async (tx) => {
       const [codeSnap, devSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
 
@@ -34,17 +35,15 @@ export default async function handler(req, res) {
       const active = Number(code.activeDevices ?? 0);
 
       const devData = (devSnap.data() || {});
-      // هر دو مدل ذخیره‌سازی را پشتیبانی کن
       const wasActive = devSnap.exists && (devData.isActive === true || devData.status === "active");
 
-      // idempotent
       if (!wasActive) {
+        // idempotent — چیزی برای آزاد کردن نیست
         return {
           activeDevices: Math.max(0, active),
           maxDevices,
           deviceId,
           alreadyReleased: true,
-          isUsed: Math.max(0, active) >= maxDevices,
         };
       }
 
@@ -55,7 +54,7 @@ export default async function handler(req, res) {
         { merge: true }
       );
 
-      // کاهش شمارنده و ثبت تاریخ
+      // کاهش شمارنده
       const newActive = Math.max(0, active - 1);
       tx.update(codeRef, {
         activeDevices: newActive,
@@ -63,7 +62,7 @@ export default async function handler(req, res) {
         maxDevices,
       });
 
-      // آینه در users/{uid}/devices — با DocID صحیح
+      // آینه در users/{uid}/devices
       tx.set(
         userDevRef,
         { isActive: false, status: "released", lastSeenAt: now },
@@ -75,11 +74,41 @@ export default async function handler(req, res) {
         maxDevices,
         deviceId,
         alreadyReleased: false,
-        isUsed: newActive >= maxDevices,
       };
     });
 
-    return res.status(200).json({ ok: true, ...result });
+    // 2) بیرون از ترنزاکشن: اگر هیچ device فعالی نمانده بود، کاربر را free کن
+    // (این کار را هم برای حالت idempotent و هم حالت عادی انجام می‌دهیم)
+    const activeLeftSnap = await userRef
+      .collection("devices")
+      .where("isActive", "==", true)
+      .limit(1)
+      .get();
+
+    let userDowngraded = false;
+    if (activeLeftSnap.empty) {
+      await userRef.set(
+        {
+          planType: "free",
+          status: "free",
+          source: "system",
+          plan: {
+            type: "free",
+            status: "free",
+            source: "system",
+          },
+          currentCode: admin.firestore.FieldValue.delete(),
+          codeId: admin.firestore.FieldValue.delete(),
+          tokenId: admin.firestore.FieldValue.delete(),
+          subscription: admin.firestore.FieldValue.delete(),
+          lastSeenAt: admin.firestore.Timestamp.now(),
+        },
+        { merge: true }
+      );
+      userDowngraded = true;
+    }
+
+    return res.status(200).json({ ok: true, ...txResult, userDowngraded });
   } catch (e) {
     console.error("release-device error:", e);
     return res.status(400).json({ error: e.message || "BAD_REQUEST" });
