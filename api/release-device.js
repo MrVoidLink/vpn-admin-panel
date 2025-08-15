@@ -23,7 +23,7 @@ export default async function handler(req, res) {
     const userRef = db.collection("users").doc(uid);
     const userDevRef = userRef.collection("devices").doc(userDeviceId);
 
-    // 1) فقط عملیات اصلی داخل ترنزاکشن
+    // 1) عملیات اصلی داخل ترنزاکشن (بدون query روی کالکشن‌ها)
     const txResult = await db.runTransaction(async (tx) => {
       const [codeSnap, devSnap] = await Promise.all([tx.get(codeRef), tx.get(codeDevRef)]);
       if (!codeSnap.exists) throw new Error("CODE_NOT_FOUND");
@@ -35,10 +35,11 @@ export default async function handler(req, res) {
       const active = Number(code.activeDevices ?? 0);
 
       const devData = (devSnap.data() || {});
-      const wasActive = devSnap.exists && (devData.isActive === true || devData.status === "active");
+      const wasActive =
+        devSnap.exists && (devData.isActive === true || devData.status === "active");
 
       if (!wasActive) {
-        // idempotent — چیزی برای آزاد کردن نیست
+        // idempotent — اگر از قبل آزاد شده بود
         return {
           activeDevices: Math.max(0, active),
           maxDevices,
@@ -47,14 +48,14 @@ export default async function handler(req, res) {
         };
       }
 
-      // آزاد کردن زیر codes/{codeId}/devices
+      // آزاد کردن در codes/{codeId}/devices/{deviceId}
       tx.set(
         codeDevRef,
         { isActive: false, status: "released", releasedAt: now },
         { merge: true }
       );
 
-      // کاهش شمارنده
+      // کم‌کردن شمارنده روی خود سند کُد (اطلاعات کُد حفظ می‌شود)
       const newActive = Math.max(0, active - 1);
       tx.update(codeRef, {
         activeDevices: newActive,
@@ -62,7 +63,7 @@ export default async function handler(req, res) {
         maxDevices,
       });
 
-      // آینه در users/{uid}/devices
+      // آینه در users/{uid}/devices/{userDeviceId}
       tx.set(
         userDevRef,
         { isActive: false, status: "released", lastSeenAt: now },
@@ -77,8 +78,8 @@ export default async function handler(req, res) {
       };
     });
 
-    // 2) بیرون از ترنزاکشن: اگر هیچ device فعالی نمانده بود، کاربر را free کن
-    // (این کار را هم برای حالت idempotent و هم حالت عادی انجام می‌دهیم)
+    // 2) بیرون از ترنزاکشن: فقط برای همین uid بررسی کن
+    // اگر هیچ device فعالی برای این کاربر نمانده بود، فیلدهای اشتراک را پاک کن و پلن را free کن.
     const activeLeftSnap = await userRef
       .collection("devices")
       .where("isActive", "==", true)
@@ -97,10 +98,15 @@ export default async function handler(req, res) {
             status: "free",
             source: "system",
           },
+          // پاک‌کردن فقط فیلدهای اشتراکِ همین کاربر
           currentCode: admin.firestore.FieldValue.delete(),
           codeId: admin.firestore.FieldValue.delete(),
           tokenId: admin.firestore.FieldValue.delete(),
           subscription: admin.firestore.FieldValue.delete(),
+          expiresAt: admin.firestore.FieldValue.delete(),
+          maxDevices: admin.firestore.FieldValue.delete(),
+          validForDays: admin.firestore.FieldValue.delete(),
+
           lastSeenAt: admin.firestore.Timestamp.now(),
         },
         { merge: true }
@@ -108,6 +114,7 @@ export default async function handler(req, res) {
       userDowngraded = true;
     }
 
+    // خروجی
     return res.status(200).json({ ok: true, ...txResult, userDowngraded });
   } catch (e) {
     console.error("release-device error:", e);
