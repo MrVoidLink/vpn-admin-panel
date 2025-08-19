@@ -1,6 +1,7 @@
 // vite-project/api/tunnel-to-firebase.js
 
-import { google } from 'google-auth-library';
+// ✅ درست
+const { google } = require('google-auth-library');
 
 const SCOPES = ['https://www.googleapis.com/auth/datastore'];
 
