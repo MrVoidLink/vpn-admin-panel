@@ -1,7 +1,9 @@
+// api/apply-token.js
 import { db } from "./firebase-admin.config.js";
 import admin from "firebase-admin";
 const { Timestamp, FieldValue } = admin.firestore;
 
+// بدنه‌ی درخواست را مطمئن بخوان (vercel dev / vite proxy)
 async function readJsonBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
   try {
@@ -29,6 +31,7 @@ export default async function handler(req, res) {
 
     const code = codeSnap.data() || {};
     const validForDays = Number(code.validForDays ?? 0);
+    // fallback به deviceLimit برای سازگاری با اسکیمای قدیمی
     const maxDevices  = Number(code.maxDevices ?? code.deviceLimit ?? 0);
     const type        = code.type || "premium";
     if (!validForDays || !maxDevices) return res.status(400).json({ error: "INVALID_CODE_META" });
@@ -42,8 +45,10 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: "CODE_EXPIRED" });
     }
 
+    // حالت ۱: فقط Apply (بدون deviceId)
     if (!deviceId) {
       await db.runTransaction(async (tx) => {
+        // فقط write داریم، read دیگری جز codeRef نداریم
         tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
         tx.set(
           userRef,
@@ -69,10 +74,12 @@ export default async function handler(req, res) {
       });
     }
 
+    // حالت ۲: Apply + Auto‑Claim (با deviceId)
     const codeDevRef = codeRef.collection("devices").doc(deviceId);
     const userDevRef = userRef.collection("devices").doc(deviceId);
 
     const result = await db.runTransaction(async (tx) => {
+      // ✅ همهٔ READها قبل از هر WRITE
       const [freshCodeSnap, codeDevSnap] = await Promise.all([
         tx.get(codeRef),
         tx.get(codeDevRef),
@@ -83,12 +90,16 @@ export default async function handler(req, res) {
       const active = Number(freshCode.activeDevices ?? 0);
       const source = freshCode.source || "admin";
 
+      // ظرفیت پر؟
       if (active >= maxDevices) {
+        // حتی در capacity full هم اجازهٔ write نمی‌دیم تا قانون Firestore حفظ شود
         return { mode: "APPLY_ONLY_CAPACITY_FULL", activeDevices: active, maxDevices, alreadyActive: false };
       }
 
+      // آیا همین device قبلاً active بوده؟
       const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
       if (wasActive) {
+        // در حالت already active هم فقط همگام‌سازی متادیتا (write بعد از read)
         tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
         tx.set(
           userRef,
@@ -105,7 +116,8 @@ export default async function handler(req, res) {
         return { mode: "APPLY_AND_ALREADY_ACTIVE", activeDevices: active, maxDevices, alreadyActive: true };
       }
 
-      const nowAdmin = Timestamp.now();
+      // ✅ از اینجا به بعد WRITEها
+      // تثبیت Apply
       tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
       tx.set(
         userRef,
@@ -119,6 +131,8 @@ export default async function handler(req, res) {
       );
       tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
 
+      // Claim دستگاه
+      const nowAdmin = Timestamp.now();
       tx.set(
         codeDevRef,
         {
@@ -148,21 +162,6 @@ export default async function handler(req, res) {
       tx.set(
         codeRef,
         { activeDevices: active + 1, lastDeviceClaimedAt: nowAdmin, activatedAt, expiresAt },
-        { merge: true }
-      );
-
-      // ✅ افزوده شده: لاگ اکتیویشن
-      tx.set(
-        codeRef.collection("activations").doc(`${uid}_${deviceId}`),
-        {
-          uid,
-          deviceId,
-          planType: type,
-          source,
-          activatedAt,
-          expiresAt,
-          at: nowAdmin,
-        },
         { merge: true }
       );
 
