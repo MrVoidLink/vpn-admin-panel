@@ -1,13 +1,26 @@
 // /api/apply-token.js
 import { db, FieldValue, Timestamp } from './_firebaseAdmin.js';
 
-// اگر بعداً خواستی با کلید حفاظت کنی، اینو فعال کن
-// const APP_TO_API_KEY = process.env.APP_TO_API_KEY;
-
 function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*'); // درصورت نیاز دامنه‌ات رو جایگزین کن
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+}
+async function findTokenRefByAny(token) {
+  const code = String(token).trim();
+
+  // 1) docId = token
+  const directRef = db.collection('tokens').doc(code);
+  const directSnap = await directRef.get();
+  if (directSnap.exists) return { ref: directRef, snap: directSnap };
+
+  // 2) where code == token
+  const q = await db.collection('tokens').where('code', '==', code).limit(1).get();
+  if (!q.empty) {
+    const doc = q.docs[0];
+    return { ref: doc.ref, snap: doc };
+  }
+  return { ref: null, snap: null };
 }
 
 export default async function handler(req, res) {
@@ -18,73 +31,53 @@ export default async function handler(req, res) {
   }
 
   try {
-    // اگر خواستی کلید رو فعال کنی:
-    // if (req.headers['x-api-key'] !== APP_TO_API_KEY) {
-    //   return res.status(401).json({ ok: false, error: 'Unauthorized' });
-    // }
-
     const { uid, token, deviceId } = req.body || {};
     if (!uid || !token || !deviceId) {
       return res.status(400).json({ ok: false, error: 'uid, token, deviceId are required' });
     }
 
-    // === خواندن توکن ===
-    // حالت پیش‌فرض: آیدی داکیومنت = خودِ token
-    const tokenRef = db.collection('tokens').doc(String(token).trim());
-    const tokenSnap = await tokenRef.get();
-
-    // اگر در دیتابیس‌ت فیلدی به نام "code" داری و docId=token نیست، از این الگو استفاده کن:
-    // const q = await db.collection('tokens').where('code', '==', String(token).trim()).limit(1).get();
-    // if (q.empty) return res.status(404).json({ ok: false, error: 'Token not found' });
-    // const tokenRef = q.docs[0].ref;
-    // const tokenSnap = await tokenRef.get();
-
-    if (!tokenSnap.exists) {
+    // === find token by docId or code field ===
+    const found = await findTokenRefByAny(token);
+    if (!found.ref || !found.snap) {
       return res.status(404).json({ ok: false, error: 'Token not found' });
     }
 
+    const tokenRef = found.ref;
+    const tokenSnap = await tokenRef.get();
     const data = tokenSnap.data() || {};
     const {
-      type,              // 'premium' | 'gift'
-      durationDays,      // 15 | 30 | 60 | 90
-      maxDevices,        // ظرفیت دستگاه‌های مجاز
-      devices = [],      // [{deviceId, uid, linkedAt, lastActiveAt}]
-      isActive = true,   // فعال بودن توکن
-      used = false,      // برای مدل‌های تک‌دستگاه
-      expiresAt,         // اختیاری: انقضای خودِ توکن
+      type,
+      durationDays,
+      maxDevices,
+      devices = [],
+      isActive = true,
+      used = false,
+      expiresAt,
     } = data;
 
     if (!isActive) return res.status(400).json({ ok: false, error: 'Token is inactive' });
     if (!durationDays || !type) {
       return res.status(400).json({ ok: false, error: 'Token config invalid' });
     }
-    if (expiresAt && expiresAt.toDate && expiresAt.toDate() < new Date()) {
+    if (expiresAt?.toDate && expiresAt.toDate() < new Date()) {
       return res.status(400).json({ ok: false, error: 'Token expired' });
     }
 
-    // اگر قبلاً همین deviceId وصل شده، idempotent: همون پاسخ موفق بده
+    const now = new Date();
     const already = Array.isArray(devices) ? devices.find(d => d.deviceId === deviceId) : null;
 
-    // ظرفیت
     if (!already && typeof maxDevices === 'number' && Array.isArray(devices) && devices.length >= maxDevices) {
       return res.status(409).json({ ok: false, error: 'No device slots left' });
     }
 
-    // === آپدیت اشتراک کاربر ===
     const userRef = db.collection('users').doc(uid);
     const userSnap = await userRef.get();
-    const now = new Date();
-
-    // expiry فعلی کاربر (اگر وجود داشته باشه)
     let currentExpiry = null;
     if (userSnap.exists) {
       const u = userSnap.data() || {};
-      if (u.subscription?.expiry?.toDate) {
-        currentExpiry = u.subscription.expiry.toDate();
-      }
+      if (u.subscription?.expiry?.toDate) currentExpiry = u.subscription.expiry.toDate();
     }
 
-    // تمدید از بزرگ‌ترِ (الان، expiry فعلی)
     const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
     const newExpiry = new Date(base.getTime());
     newExpiry.setDate(newExpiry.getDate() + Number(durationDays));
@@ -97,7 +90,6 @@ export default async function handler(req, res) {
     };
 
     const batch = db.batch();
-
     if (!already) {
       batch.update(tokenRef, {
         devices: FieldValue.arrayUnion(deviceEntry),
@@ -105,31 +97,23 @@ export default async function handler(req, res) {
         updatedAt: Timestamp.now(),
       });
     } else {
-      // فقط lastActiveAt را به‌روز کن
       const newDevices = devices.map(d =>
         d.deviceId === deviceId ? { ...d, lastActiveAt: Timestamp.fromDate(now) } : d
       );
-      batch.update(tokenRef, {
-        devices: newDevices,
-        updatedAt: Timestamp.now(),
-      });
+      batch.update(tokenRef, { devices: newDevices, updatedAt: Timestamp.now() });
     }
 
-    // آپدیت کاربر
     batch.set(
       userRef,
       {
         subscription: {
-          plan: type, // 'premium' | 'gift'
+          plan: type,
           expiry: Timestamp.fromDate(newExpiry),
           lastAppliedAt: Timestamp.fromDate(now),
           sourceToken: String(token).trim(),
         },
         devices: {
-          [deviceId]: {
-            active: true,
-            linkedAt: Timestamp.fromDate(now),
-          },
+          [deviceId]: { active: true, linkedAt: Timestamp.fromDate(now) },
         },
         updatedAt: Timestamp.now(),
       },
