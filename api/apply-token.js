@@ -1,26 +1,55 @@
-// /api/apply-token.js
+// بالا:
 import { db, FieldValue, Timestamp } from './_firebaseAdmin.js';
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
 }
-async function findTokenRefByAny(token) {
-  const code = String(token).trim();
 
-  // 1) docId = token
-  const directRef = db.collection('tokens').doc(code);
-  const directSnap = await directRef.get();
-  if (directSnap.exists) return { ref: directRef, snap: directSnap };
+// 🔎 جست‌وجوی منعطف
+async function findTokenRefByAny(tokenRaw) {
+  const code = String(tokenRaw || '').trim();
+  if (!code) return { ref: null, snap: null, where: 'empty' };
 
-  // 2) where code == token
-  const q = await db.collection('tokens').where('code', '==', code).limit(1).get();
-  if (!q.empty) {
-    const doc = q.docs[0];
-    return { ref: doc.ref, snap: doc };
+  // نرمال‌سازی ساده: حروف بزرگ/کوچک
+  const variants = [code, code.toUpperCase(), code.toLowerCase()];
+
+  // کالکشن‌هایی که چک می‌کنیم
+  const collections = ['tokens', 'codes'];
+
+  // 1) تلاش با docId برابر با هر واریانت
+  for (const coll of collections) {
+    for (const v of variants) {
+      const ref = db.collection(coll).doc(v);
+      const snap = await ref.get();
+      if (snap.exists) return { ref, snap, where: `docId:${coll}/${v}` };
+    }
   }
-  return { ref: null, snap: null };
+
+  // 2) تلاش با فیلدهای رایج
+  const fields = ['code', 'token', 'value'];
+  for (const coll of collections) {
+    for (const f of fields) {
+      const q = await db.collection(coll).where(f, '==', code).limit(1).get();
+      if (!q.empty) {
+        const doc = q.docs[0];
+        return { ref: doc.ref, snap: doc, where: `field:${coll}.${f}` };
+      }
+      // یک‌بار هم با upper/lower تست کن
+      const q2 = await db.collection(coll).where(f, '==', code.toUpperCase()).limit(1).get();
+      if (!q2.empty) {
+        const doc = q2.docs[0];
+        return { ref: doc.ref, snap: doc, where: `field:${coll}.${f}.upper` };
+      }
+      const q3 = await db.collection(coll).where(f, '==', code.toLowerCase()).limit(1).get();
+      if (!q3.empty) {
+        const doc = q3.docs[0];
+        return { ref: doc.ref, snap: doc, where: `field:${coll}.${f}.lower` };
+      }
+    }
+  }
+  return { ref: null, snap: null, where: 'not-found' };
 }
 
 export default async function handler(req, res) {
@@ -36,29 +65,26 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: 'uid, token, deviceId are required' });
     }
 
-    // === find token by docId or code field ===
+    // ✅ پروژه‌ای که وصل شدیم (برای دیباگ mismatch)
+    console.log('apply-token projectId:', process.env.FIREBASE_PROJECT_ID, 'incoming token:', token);
+
+    // 🔎 پیدا کردن توکن
     const found = await findTokenRefByAny(token);
     if (!found.ref || !found.snap) {
+      console.warn('Token search MISS where=', found.where, 'token=', token);
       return res.status(404).json({ ok: false, error: 'Token not found' });
     }
+    console.log('Token search HIT where=', found.where);
 
     const tokenRef = found.ref;
-    const tokenSnap = await tokenRef.get();
-    const data = tokenSnap.data() || {};
+    const data = (await tokenRef.get()).data() || {};
     const {
-      type,
-      durationDays,
-      maxDevices,
-      devices = [],
-      isActive = true,
-      used = false,
-      expiresAt,
+      type, durationDays, maxDevices,
+      devices = [], isActive = true, used = false, expiresAt,
     } = data;
 
     if (!isActive) return res.status(400).json({ ok: false, error: 'Token is inactive' });
-    if (!durationDays || !type) {
-      return res.status(400).json({ ok: false, error: 'Token config invalid' });
-    }
+    if (!durationDays || !type) return res.status(400).json({ ok: false, error: 'Token config invalid' });
     if (expiresAt?.toDate && expiresAt.toDate() < new Date()) {
       return res.status(400).json({ ok: false, error: 'Token expired' });
     }
@@ -72,19 +98,16 @@ export default async function handler(req, res) {
 
     const userRef = db.collection('users').doc(uid);
     const userSnap = await userRef.get();
-    let currentExpiry = null;
-    if (userSnap.exists) {
-      const u = userSnap.data() || {};
-      if (u.subscription?.expiry?.toDate) currentExpiry = u.subscription.expiry.toDate();
-    }
+    const currentExpiry = userSnap.exists && userSnap.data()?.subscription?.expiry?.toDate
+      ? userSnap.data().subscription.expiry.toDate()
+      : null;
 
     const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
     const newExpiry = new Date(base.getTime());
     newExpiry.setDate(newExpiry.getDate() + Number(durationDays));
 
     const deviceEntry = {
-      deviceId,
-      uid,
+      deviceId, uid,
       linkedAt: Timestamp.fromDate(now),
       lastActiveAt: Timestamp.fromDate(now),
     };
