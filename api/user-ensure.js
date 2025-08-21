@@ -23,10 +23,12 @@ export default async function handler(req, res) {
     const action = (body.action || "ensure").toString();
     const now = Timestamp.now();
 
-    // حالت ست‌کردن زبان (بدون دست‌زدن به سایر فیلدها)
+    // --- حالت ست‌کردن زبان (بدون دست‌زدن به سایر فیلدها) ---
     if (action === "setLanguage") {
       const { uid, language } = body || {};
-      if (!uid || !language) return res.status(400).json({ error: "uid and language are required" });
+      if (!uid || !language) {
+        return res.status(400).json({ error: "uid and language are required" });
+      }
       await db.collection("users").doc(uid).set(
         { language, lastSeenAt: now },
         { merge: true }
@@ -34,10 +36,10 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, mode: "setLanguage" });
     }
 
-    // حالت پیش‌فرض: ensure
+    // --- حالت پیش‌فرض: ensure (ورود ناشناس + ساخت/آپدیت پروفایل) ---
     const {
       uid,
-      language,   // اختیاری
+      language,   // اختیاری؛ اگر بیاید ست می‌شود
       appVersion,
       platform,
       deviceModel,
@@ -49,31 +51,71 @@ export default async function handler(req, res) {
     }
 
     const userRef = db.collection("users").doc(uid);
+    const snap = await userRef.get();
+    const existing = snap.exists ? (snap.data() || {}) : {};
 
-    // فقط اگر language آمده باشد، ستش می‌کنیم
+    // payload پایه (بدون تخریب ساختار موجود)
     const payload = {
       appVersion,
       platform,
       deviceModel,
       lastSeenAt: now,
-      ...(language ? { language } : {}),
+      ...(language ? { language } : {}), // زبان فقط اگر آمده باشد
       ...extra,
     };
 
-    await userRef.set(
-      {
-        ...payload,
-        createdAt: now, // اگر قبلاً بوده، با merge دست‌نخورده می‌ماند
-        subscription: {
-          plan: "free",
-          type: "free",
-          startedAt: now,
-          expiresAt: null,
-          ...(extra.subscription || {}),
-        },
-      },
-      { merge: true }
-    );
+    // createdAt فقط اگر قبلاً نداشته است
+    if (!existing.createdAt) {
+      payload.createdAt = now;
+    }
+
+    // تضمین سازگاری با داشبورد ادمین (aliasها فقط اگر وجود ندارند ست می‌شوند)
+    const defaultPlanMap = {
+      type: "free",
+      source: "app",
+      status: "inactive",
+      codeId: null,
+      maxDevices: null,
+      expiresAt: null,
+    };
+
+    // مپ plan (قدیمی) فقط اگر وجود ندارد
+    if (!existing.plan) {
+      payload.plan = defaultPlanMap;
+    }
+
+    // aliasهای ریشه فقط اگر وجود ندارند
+    if (existing.planType === undefined && existing.plan?.type === undefined) {
+      payload.planType = defaultPlanMap.type;
+    }
+    if (existing.source === undefined && existing.plan?.source === undefined) {
+      payload.source = defaultPlanMap.source;
+    }
+    if (existing.status === undefined && existing.plan?.status === undefined) {
+      payload.status = defaultPlanMap.status;
+    }
+    if (existing.codeId === undefined && existing.plan?.codeId === undefined) {
+      payload.codeId = defaultPlanMap.codeId;
+    }
+    if (existing.maxDevices === undefined && existing.plan?.maxDevices === undefined) {
+      payload.maxDevices = defaultPlanMap.maxDevices;
+    }
+    if (existing.expiresAt === undefined && existing.plan?.expiresAt === undefined) {
+      payload.expiresAt = defaultPlanMap.expiresAt;
+    }
+
+    // subscription فقط اگر وجود ندارد یا خالی است مقداردهی اولیه می‌شود
+    if (!existing.subscription || typeof existing.subscription !== "object") {
+      payload.subscription = {
+        plan: "free",
+        type: "free",
+        startedAt: now,
+        expiresAt: null,
+        ...(extra.subscription || {}),
+      };
+    }
+
+    await userRef.set(payload, { merge: true });
 
     return res.status(200).json({ ok: true, mode: "ensure" });
   } catch (e) {
