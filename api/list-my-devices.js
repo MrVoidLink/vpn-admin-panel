@@ -20,9 +20,8 @@ export default async function handler(req, res) {
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
     if (!userSnap.exists) return res.status(404).json({ error: "USER_NOT_FOUND" });
-    const user = userSnap.data() || {};
 
-    // --- summary fields for Account ---
+    const user = userSnap.data() || {};
     const planMap = user.plan || null;
     const planType = user.planType ?? planMap?.type ?? null;
     const status = user.status ?? planMap?.status ?? "unknown";
@@ -31,32 +30,34 @@ export default async function handler(req, res) {
     const subscription = user.subscription || null;
     const codeId = user.tokenId || user.codeId || user.currentCode || null;
 
-    // --- fetch user's own devices: users/{uid}/devices ---
+    // NEW: users/{uid}/devices → برای نمایش “دستگاه‌های من” و Unlink
     const userDevsSnap = await userRef.collection("devices").get();
     const userDevices = userDevsSnap.docs.map((d) => {
       const m = d.data() || {};
+      const statusStr = String(m.status || "").toLowerCase();
+      const hasIsActive = Object.prototype.hasOwnProperty.call(m, "isActive");
+      const isActive =
+        m.isActive === true ||
+        statusStr === "active" ||
+        (statusStr === "" && (!hasIsActive || m.isActive !== false));
       return {
         id: d.id,
         name: m.name ?? m.deviceName ?? "این دستگاه",
-        isActive:
-          m.isActive === true ||
-          String(m.status || "").toLowerCase() === "active" ||
-          (!("isActive" in m) && String(m.status || "") === ""),
+        isActive,
         code: m.code ?? m.token ?? m.subscriptionCode ?? null,
         createdAt: tsToMs(m.registeredAt ?? m.createdAt),
         lastSeen: tsToMs(m.lastSeenAt ?? m.lastSeen),
       };
     });
 
-    // if no code, still return
     if (!codeId) {
       return res.status(200).json({
         ok: true,
         codeId: null,
         maxDevices: null,
-        activeDevices: 0,
-        devices: [],          // kept for backward-compat (code devices)
-        userDevices,          // NEW: user-level devices for app UI
+        activeDevices: userDevices.filter((d) => d.isActive).length,
+        devices: [],     // سازگاری با پنل فعلی
+        userDevices,     // مهم برای اپ
         plan: planMap,
         planType,
         status,
@@ -69,7 +70,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // --- code devices: codes/{codeId}/devices for this uid ---
+    // کُد: devices زیر codes/{codeId}/devices برای سازگاری با پنل ادمین
     const codeRef = db.collection("codes").doc(codeId);
     const [codeSnap, codeDevsSnap] = await Promise.all([
       codeRef.get(),
@@ -78,8 +79,8 @@ export default async function handler(req, res) {
 
     const code = codeSnap.exists ? codeSnap.data() : null;
     const codeDevices = codeDevsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
     const activeFromCode = typeof code?.activeDevices === "number" ? code.activeDevices : null;
+
     const computedActive = codeDevices.reduce((acc, m) => {
       const statusStr = String(m?.status || "").toLowerCase();
       const hasIsActive = Object.prototype.hasOwnProperty.call(m || {}, "isActive");
@@ -94,14 +95,13 @@ export default async function handler(req, res) {
     const codeMaxDevices = typeof code?.maxDevices === "number" ? code.maxDevices : null;
     const remaining = codeMaxDevices == null ? null : codeMaxDevices - usedDevices;
 
-    
     return res.status(200).json({
       ok: true,
       codeId,
       maxDevices: codeMaxDevices,
       activeDevices: usedDevices,
-      devices: codeDevices,   // kept for Admin/backward-compat
-      userDevices,            // NEW: user's own devices for AccountScreen
+      devices: codeDevices,  // برای پنل
+      userDevices,           // برای اپ (my devices)
       plan: planMap,
       planType,
       status,
