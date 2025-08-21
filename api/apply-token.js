@@ -1,184 +1,202 @@
 // api/apply-token.js
-import { db } from "./firebase-admin.config.js";
-import admin from "firebase-admin";
-const { Timestamp, FieldValue } = admin.firestore;
+import { db } from './firebase-admin.config.js'; // ← مطابق ساختار پروژه‌ی فعلی
+import admin from 'firebase-admin';
 
-// بدنه‌ی درخواست را مطمئن بخوان (vercel dev / vite proxy)
+const { FieldValue, Timestamp } = admin.firestore;
+
+function cors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+}
+
+// ترتیب جست‌وجو: اول codes (الگوی قدیمی)، بعد tokens
+const COLLECTIONS = [
+  process.env.TOKENS_COLLECTION_PRIMARY || 'codes',
+  process.env.TOKENS_COLLECTION_FALLBACK || 'tokens',
+];
+// فیلدهای محتمل برای ذخیره‌ی خودِ کُد
+const CODE_FIELDS = [
+  process.env.TOKEN_CODE_FIELD || 'code',
+  'token',
+  'value',
+];
+
+function norm(raw) {
+  return String(raw || '').trim();
+}
+
+// بدنه‌ی JSON را مطمئن بخوان (برای vercel dev/vite proxy)
 async function readJsonBody(req) {
-  if (req.body && typeof req.body === "object") return req.body;
+  if (req.body && typeof req.body === 'object') return req.body;
   try {
     const chunks = [];
-    for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    const raw = Buffer.concat(chunks).toString("utf8") || "";
+    for await (const chunk of req) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+    const raw = Buffer.concat(chunks).toString('utf8') || '';
     return raw ? JSON.parse(raw) : {};
-  } catch {
+  } catch (_) {
     return {};
   }
 }
 
+async function findTokenRef(rawToken) {
+  const code = norm(rawToken);
+  if (!code) return { ref: null, where: 'empty' };
+
+  const variants = [code, code.toUpperCase(), code.toLowerCase()];
+
+  // 1) تلاش با DocID
+  for (const coll of COLLECTIONS) {
+    for (const v of variants) {
+      const ref = db.collection(coll).doc(v);
+      const snap = await ref.get();
+      if (snap.exists) return { ref, where: `docId:${coll}/${v}` };
+    }
+  }
+
+  // 2) تلاش با فیلدهای رایج (code/token/value)
+  for (const coll of COLLECTIONS) {
+    for (const field of CODE_FIELDS) {
+      for (const v of variants) {
+        const q = await db.collection(coll).where(field, '==', v).limit(1).get();
+        if (!q.empty) {
+          const doc = q.docs[0];
+          return { ref: doc.ref, where: `field:${coll}.${field}=${v}` };
+        }
+      }
+    }
+  }
+
+  return { ref: null, where: 'not-found' };
+}
+
 export default async function handler(req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') return res.status(204).end();
+  if (req.method !== 'POST') {
+    return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
+  }
+
   try {
-    if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
-
-    const { uid, codeId, deviceId, deviceInfo = {} } = await readJsonBody(req);
-    if (!uid || !codeId) return res.status(400).json({ error: "uid_and_code_required" });
-
-    const codeRef = db.collection("codes").doc(codeId);
-    const userRef = db.collection("users").doc(uid);
-
-    const codeSnap = await codeRef.get();
-    if (!codeSnap.exists) return res.status(404).json({ error: "CODE_NOT_FOUND" });
-
-    const code = codeSnap.data() || {};
-    const validForDays = Number(code.validForDays ?? 0);
-    // fallback به deviceLimit برای سازگاری با اسکیمای قدیمی
-    const maxDevices  = Number(code.maxDevices ?? code.deviceLimit ?? 0);
-    const type        = code.type || "premium";
-    if (!validForDays || !maxDevices) return res.status(400).json({ error: "INVALID_CODE_META" });
-
-    const now = Timestamp.now();
-    const activatedAt = code.activatedAt ?? now;
-    const expiresAt =
-      code.expiresAt ?? Timestamp.fromMillis(activatedAt.toMillis() + validForDays * 86400000);
-
-    if (expiresAt.toMillis() <= Date.now()) {
-      return res.status(400).json({ error: "CODE_EXPIRED" });
+    const body = await readJsonBody(req);
+    const { uid, token, deviceId } = body || {};
+    if (!uid || !token || !deviceId) {
+      return res.status(400).json({ ok: false, error: 'uid, token, deviceId are required' });
     }
 
-    // حالت ۱: فقط Apply (بدون deviceId)
-    if (!deviceId) {
-      await db.runTransaction(async (tx) => {
-        // فقط write داریم، read دیگری جز codeRef نداریم
-        tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
-        tx.set(
-          userRef,
-          {
-            tokenId: codeId,
-            planType: type === "gift" ? "gift" : "premium",
-            status: "active",
-            subscription: { source: code.source || "admin", codeId, expiresAt },
-          },
-          { merge: true }
-        );
-        tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
-      });
+    // لاگ تشخیصی واضح
+    console.log('[apply-token] pid=', process.env.FIREBASE_PROJECT_ID,
+      'collections=', COLLECTIONS, 'fields=', CODE_FIELDS, 'incoming=', token);
 
-      return res.status(200).json({
-        ok: true,
-        mode: "APPLY_ONLY",
-        codeId,
-        validForDays,
-        maxDevices,
-        activatedAt: activatedAt.toDate(),
-        expiresAt: expiresAt.toDate(),
-      });
+    // پیدا کردن توکن دقیقاً با منطق بالا
+    const found = await findTokenRef(token);
+    if (!found.ref) {
+      console.warn('[apply-token] MISS where=', found.where, 'token=', token);
+      return res.status(404).json({ ok: false, error: 'Token not found' });
+    }
+    console.log('[apply-token] HIT where=', found.where);
+
+    const tokenRef = found.ref;
+    const snap = await tokenRef.get();
+    const data = snap.data() || {};
+
+    const {
+      type,              // 'premium' | 'gift'
+      durationDays,      // 15 | 30 | 60 | 90
+      maxDevices,        // Number
+      devices = [],      // Array<{deviceId, uid, linkedAt, lastActiveAt}>
+      isActive = true,   // Boolean
+      used = false,      // Boolean
+      expiresAt,         // Timestamp?
+    } = data;
+
+    if (!isActive) return res.status(400).json({ ok: false, error: 'Token is inactive' });
+    if (!durationDays || !type) {
+      return res.status(400).json({ ok: false, error: 'Token config invalid' });
+    }
+    if (expiresAt?.toDate && expiresAt.toDate() < new Date()) {
+      return res.status(400).json({ ok: false, error: 'Token expired' });
     }
 
-    // حالت ۲: Apply + Auto‑Claim (با deviceId)
-    const codeDevRef = codeRef.collection("devices").doc(deviceId);
-    const userDevRef = userRef.collection("devices").doc(deviceId);
+    const now = new Date();
+    const already = Array.isArray(devices) ? devices.find(d => d.deviceId === deviceId) : null;
 
-    const result = await db.runTransaction(async (tx) => {
-      // ✅ همهٔ READها قبل از هر WRITE
-      const [freshCodeSnap, codeDevSnap] = await Promise.all([
-        tx.get(codeRef),
-        tx.get(codeDevRef),
-      ]);
-      if (!freshCodeSnap.exists) throw new Error("CODE_NOT_FOUND");
-      const freshCode = freshCodeSnap.data() || {};
+    if (!already && typeof maxDevices === 'number' && Array.isArray(devices) && devices.length >= maxDevices) {
+      return res.status(409).json({ ok: false, error: 'No device slots left' });
+    }
 
-      const active = Number(freshCode.activeDevices ?? 0);
-      const source = freshCode.source || "admin";
+    // تمدید اشتراک کاربر (از expiry فعلی یا الان + durationDays)
+    const userRef = db.collection('users').doc(uid);
+    const userSnap = await userRef.get();
 
-      // ظرفیت پر؟
-      if (active >= maxDevices) {
-        // حتی در capacity full هم اجازهٔ write نمی‌دیم تا قانون Firestore حفظ شود
-        return { mode: "APPLY_ONLY_CAPACITY_FULL", activeDevices: active, maxDevices, alreadyActive: false };
-      }
+    const currentExpiry = userSnap.exists && userSnap.data()?.subscription?.expiry?.toDate
+      ? userSnap.data().subscription.expiry.toDate()
+      : null;
 
-      // آیا همین device قبلاً active بوده؟
-      const wasActive = codeDevSnap.exists && !!(codeDevSnap.data() || {}).isActive;
-      if (wasActive) {
-        // در حالت already active هم فقط همگام‌سازی متادیتا (write بعد از read)
-        tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
-        tx.set(
-          userRef,
-          {
-            tokenId: codeId,
-            planType: type === "gift" ? "gift" : "premium",
-            status: "active",
-            subscription: { source, codeId, expiresAt },
-          },
-          { merge: true }
-        );
-        tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
+    const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
+    const newExpiry = new Date(base.getTime());
+    newExpiry.setDate(newExpiry.getDate() + Number(durationDays));
 
-        return { mode: "APPLY_AND_ALREADY_ACTIVE", activeDevices: active, maxDevices, alreadyActive: true };
-      }
+    const deviceEntry = {
+      deviceId,
+      uid,
+      linkedAt: Timestamp.fromDate(now),
+      lastActiveAt: Timestamp.fromDate(now),
+    };
 
-      // ✅ از اینجا به بعد WRITEها
-      // تثبیت Apply
-      tx.set(codeRef, { type, validForDays, maxDevices, activatedAt, expiresAt }, { merge: true });
-      tx.set(
-        userRef,
-        {
-          tokenId: codeId,
-          planType: type === "gift" ? "gift" : "premium",
-          status: "active",
-          subscription: { source, codeId, expiresAt },
+    const batch = db.batch();
+
+    if (!already) {
+      batch.update(tokenRef, {
+        devices: FieldValue.arrayUnion(deviceEntry),
+        used: (maxDevices === 1) ? true : (used ?? false),
+        updatedAt: Timestamp.now(),
+      });
+    } else {
+      const newDevices = devices.map(d =>
+        d.deviceId === deviceId ? { ...d, lastActiveAt: Timestamp.fromDate(now) } : d
+      );
+      batch.update(tokenRef, { devices: newDevices, updatedAt: Timestamp.now() });
+    }
+
+    batch.set(
+      userRef,
+      {
+        subscription: {
+          plan: type,
+          expiry: Timestamp.fromDate(newExpiry),
+          lastAppliedAt: Timestamp.fromDate(now),
+          sourceToken: norm(token),
         },
-        { merge: true }
-      );
-      tx.set(codeRef.collection("redemptions").doc(uid), { uid, action: "apply", appliedAt: now }, { merge: true });
-
-      // Claim دستگاه
-      const nowAdmin = Timestamp.now();
-      tx.set(
-        codeDevRef,
-        {
-          uid,
-          isActive: true,
-          claimedAt: nowAdmin,
-          platform: deviceInfo.platform || null,
-          model: deviceInfo.model || null,
-          appVersion: deviceInfo.appVersion || null,
+        devices: {
+          [deviceId]: { active: true, linkedAt: Timestamp.fromDate(now) },
         },
-        { merge: true }
-      );
-      tx.set(
-        userDevRef,
-        {
-          deviceId,
-          uid,
-          isActive: true,
-          platform: deviceInfo.platform || null,
-          model: deviceInfo.model || null,
-          appVersion: deviceInfo.appVersion || null,
-          registeredAt: FieldValue.serverTimestamp(),
-          lastSeenAt: nowAdmin,
-        },
-        { merge: true }
-      );
-      tx.set(
-        codeRef,
-        { activeDevices: active + 1, lastDeviceClaimedAt: nowAdmin, activatedAt, expiresAt },
-        { merge: true }
-      );
+        updatedAt: Timestamp.now(),
+      },
+      { merge: true }
+    );
 
-      return { mode: "APPLY_AND_CLAIMED", activeDevices: active + 1, maxDevices, alreadyActive: false };
-    });
+    await batch.commit();
+
+    const remaining =
+      typeof maxDevices === 'number'
+        ? Math.max(0, maxDevices - (already ? devices.length : devices.length + 1))
+        : null;
 
     return res.status(200).json({
       ok: true,
-      codeId,
-      validForDays,
-      maxDevices,
-      activatedAt: activatedAt.toDate(),
-      expiresAt: expiresAt.toDate(),
-      ...result,
+      token: norm(token),
+      plan: type,
+      durationDays,
+      user: { uid },
+      device: { deviceId },
+      remainingSlots: remaining,
+      expiryISO: newExpiry.toISOString(),
     });
-  } catch (e) {
-    console.error("apply-token error:", e);
-    return res.status(500).json({ error: e?.message || "INTERNAL" });
+  } catch (err) {
+    console.error('[apply-token] error:', err);
+    return res.status(500).json({ ok: false, error: String(err?.message || err) });
   }
 }
