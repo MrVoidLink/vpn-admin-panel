@@ -1,7 +1,7 @@
 // api/user-ensure.js
 import { db } from "./firebase-admin.config.js";
 import admin from "firebase-admin";
-const { Timestamp, FieldValue } = admin.firestore;
+const { Timestamp } = admin.firestore;
 
 async function readJsonBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
@@ -20,45 +20,62 @@ export default async function handler(req, res) {
     if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
 
     const body = await readJsonBody(req);
+    const action = (body.action || "ensure").toString();
+    const now = Timestamp.now();
+
+    // حالت ست‌کردن زبان (بدون دست‌زدن به سایر فیلدها)
+    if (action === "setLanguage") {
+      const { uid, language } = body || {};
+      if (!uid || !language) return res.status(400).json({ error: "uid and language are required" });
+      await db.collection("users").doc(uid).set(
+        { language, lastSeenAt: now },
+        { merge: true }
+      );
+      return res.status(200).json({ ok: true, mode: "setLanguage" });
+    }
+
+    // حالت پیش‌فرض: ensure
     const {
       uid,
-      language,            // اختیاری
+      language,   // اختیاری
       appVersion,
       platform,
       deviceModel,
-      extra = {},          // هر متادیتای دیگری
+      extra = {},
     } = body || {};
 
     if (!uid || !appVersion || !platform || !deviceModel) {
       return res.status(400).json({ error: "uid, appVersion, platform, deviceModel are required" });
     }
 
-    const now = Timestamp.now();
     const userRef = db.collection("users").doc(uid);
 
-    // merge profile
+    // فقط اگر language آمده باشد، ستش می‌کنیم
     const payload = {
-      language: language ?? admin.firestore.FieldValue.delete(), // اگر نداد، دست نزنیم/پاک نکنیم
       appVersion,
       platform,
       deviceModel,
       lastSeenAt: now,
-      // اگر اولین بار است، createdAt را ست کن
-      createdAt: now,
-      // ساختار اولیه اشتراک اگر وجود ندارد
-      subscription: {
-        plan: "free",
-        type: "free",
-        startedAt: now,
-        expiresAt: null,
-      },
+      ...(language ? { language } : {}),
       ...extra,
     };
 
-    await userRef.set(payload, { merge: true });
+    await userRef.set(
+      {
+        ...payload,
+        createdAt: now, // اگر قبلاً بوده، با merge دست‌نخورده می‌ماند
+        subscription: {
+          plan: "free",
+          type: "free",
+          startedAt: now,
+          expiresAt: null,
+          ...(extra.subscription || {}),
+        },
+      },
+      { merge: true }
+    );
 
-    // اگر createdAt قبلاً وجود داشته، دست‌نخورده می‌ماند (merge=true)
-    return res.status(200).json({ ok: true });
+    return res.status(200).json({ ok: true, mode: "ensure" });
   } catch (e) {
     console.error("user-ensure error:", e);
     return res.status(500).json({ error: e?.message || "INTERNAL" });
