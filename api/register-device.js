@@ -15,7 +15,6 @@ async function readJsonBody(req) {
   }
 }
 
-// تولید یک uid تصادفی (بدون Firebase Auth)
 function randomUid() {
   return (
     Math.random().toString(36).slice(2, 10) +
@@ -24,7 +23,6 @@ function randomUid() {
   );
 }
 
-// بررسی و ساخت uid در صورت نبود
 async function ensureUid(incomingUid) {
   if (incomingUid && typeof incomingUid === "string" && incomingUid.trim()) return incomingUid;
   for (let i = 0; i < 5; i++) {
@@ -43,25 +41,23 @@ export default async function handler(req, res) {
     }
 
     const body = await readJsonBody(req);
-    let { uid, deviceId, deviceInfo = {} } = body || {};
+    let { uid, deviceId, deviceInfo = {}, profile = {} } = body || {};
+    // نکته: profile اختیاریه تا اگر روزی خواستی از اپ چیزی مثل status اولیه بفرستی، merge بشه
 
-    // deviceId لازم است؛ uid اگر نبود اینجا ساخته می‌شود
     if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
       return res.status(400).json({ ok: false, error: "deviceId is required" });
     }
 
-    // اگر uid نیامده باشد، در بک‌اند بساز
     uid = await ensureUid(uid);
-
     const now = Timestamp.now();
 
     // --- ساخت/به‌روزرسانی پروفایل کاربر ---
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
 
-    const userData = {
+    // فیلدهای عمومی که هر بار آپدیت می‌شن
+    const baseUserData = {
       uid,
-      // فیلدهای معنادار از deviceInfo → سطح پروفایل
       language: deviceInfo.language ?? FieldValue.delete(),
       platform: deviceInfo.platform ?? FieldValue.delete(),
       deviceModel: deviceInfo.model ?? FieldValue.delete(),
@@ -69,9 +65,27 @@ export default async function handler(req, res) {
       appVersion: deviceInfo.appVersion ?? FieldValue.delete(),
       lastSeenAt: now,
       updatedAt: now,
-      ...(userSnap.exists ? {} : { createdAt: now }),
     };
-    await userRef.set(userData, { merge: true });
+
+    // اسکلت اولیه فقط بار اول (برای سازگاری با قبل)
+    const initialUserSkeleton = userSnap.exists
+      ? {}
+      : {
+          createdAt: now,
+
+          // فیلدهای اشتراک/وضعیت—فقط اسکلت اولیه
+          planType: profile.planType ?? null,   // 'premium' | 'gift' | null (کاربر آزاد)
+          status: profile.status ?? 'guest',    // 'guest' تا وقتی توکن اعمال نشده
+          expiry: profile.expiry ?? null,       // epoch ms یا null
+          maxDevices: profile.maxDevices ?? null,
+          codeId: profile.codeId ?? null,
+          currentCode: profile.currentCode ?? null,
+
+          // اگر از قبل داده‌ای می‌فرستی، اینجا هم merge می‌شود
+          ...(typeof profile === 'object' ? profile : {}),
+        };
+
+    await userRef.set({ ...baseUserData, ...initialUserSkeleton }, { merge: true });
 
     // --- ثبت/به‌روزرسانی دستگاه ---
     const devRef = userRef.collection("devices").doc(deviceId);
@@ -83,7 +97,6 @@ export default async function handler(req, res) {
       updatedAt: now,
       ...(devSnap.exists ? {} : { createdAt: now }),
     };
-
     await devRef.set(deviceData, { merge: true });
 
     return res.status(200).json({
