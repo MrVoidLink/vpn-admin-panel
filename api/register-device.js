@@ -1,7 +1,7 @@
 // api/register-device.js
 import { db } from "./firebase-admin.config.js";
 import admin from "firebase-admin";
-const { Timestamp, FieldValue } = admin.firestore;
+const { Timestamp } = admin.firestore;
 
 async function readJsonBody(req) {
   if (req.body && typeof req.body === "object") return req.body;
@@ -43,37 +43,72 @@ export default async function handler(req, res) {
     }
 
     const body = await readJsonBody(req);
-    let { uid, deviceId, deviceInfo = {} } = body || {};
+    // می‌تونیم از کلاینت علاوه بر deviceInfo یک آبجکت profile هم بگیریم (اختیاری)
+    let { uid, deviceId, deviceInfo = {}, profile = {} } = body || {};
 
-    // deviceId لازم است؛ uid اگر نبود اینجا ساخته می‌شود
     if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
       return res.status(400).json({ ok: false, error: "deviceId is required" });
     }
 
-    // اگر uid نیامده باشد، در بک‌اند بساز
     uid = await ensureUid(uid);
-
     const now = Timestamp.now();
 
-    // --- ساخت/به‌روزرسانی پروفایل کاربر ---
+    // ---------- User profile (merge-safe) ----------
     const userRef = db.collection("users").doc(uid);
     const userSnap = await userRef.get();
 
+    // فقط کلیدهای موجود را مرج کن تا مقدارهای قبلی از بین نروند
     const userData = {
       uid,
-      // فیلدهای معنادار از deviceInfo → سطح پروفایل
-      language: deviceInfo.language ?? FieldValue.delete(),
-      platform: deviceInfo.platform ?? FieldValue.delete(),
-      deviceModel: deviceInfo.model ?? FieldValue.delete(),
-      osVersion: deviceInfo.osVersion ?? FieldValue.delete(),
-      appVersion: deviceInfo.appVersion ?? FieldValue.delete(),
       lastSeenAt: now,
       updatedAt: now,
-      ...(userSnap.exists ? {} : { createdAt: now }),
     };
+
+    // deviceInfo → سطح پروفایل
+    if (deviceInfo.language != null)   userData.language    = deviceInfo.language;
+    if (deviceInfo.platform != null)   userData.platform    = deviceInfo.platform;
+    if (deviceInfo.model != null)      userData.deviceModel = deviceInfo.model;
+    if (deviceInfo.osVersion != null)  userData.osVersion   = deviceInfo.osVersion;
+    if (deviceInfo.appVersion != null) userData.appVersion  = deviceInfo.appVersion;
+
+    // profile → مرج اختیاری
+    if (profile && typeof profile === "object") {
+      for (const [k, v] of Object.entries(profile)) {
+        if (v !== undefined) userData[k] = v;
+      }
+    }
+
+    // فقط بار اول: اسکلت سازگار با Admin Panel/کلاینت
+    if (!userSnap.exists) {
+      userData.createdAt = now;
+
+      // اشتراک/وضعیت
+      if (userData.planType === undefined)      userData.planType = "free";
+      if (userData.status === undefined)        userData.status   = "guest";
+      if (userData.expiresAt === undefined)     userData.expiresAt = null;
+
+      // ظرفیت دستگاه‌ها: برای سازگاری هر دو را نگه داریم
+      if (userData.maxDevices === undefined)        userData.maxDevices = null;
+      if (userData.userMaxDevices === undefined)    userData.userMaxDevices = userData.maxDevices;
+
+      // کد/توکن
+      if (userData.codeId === undefined)        userData.codeId = null;
+      if (userData.currentCode === undefined)   userData.currentCode = null;
+      if (userData.tokenId === undefined)       userData.tokenId = null; // اگر UI شما Token ID نشان می‌دهد
+
+      // فیلدهای UI (خنثی/نمایشی)
+      if (userData.subscriptionSource === undefined) userData.subscriptionSource = null;
+      if (userData.defaultServer === undefined)      userData.defaultServer = null;
+      if (userData.notes === undefined)              userData.notes = null;
+      if (userData.favorites === undefined)          userData.favorites = 0;
+      if (userData.sessions === undefined)           userData.sessions = 0;
+      if (userData.lastServer === undefined)         userData.lastServer = null;
+      if (userData.usage === undefined)              userData.usage = 0; // bytes
+    }
+
     await userRef.set(userData, { merge: true });
 
-    // --- ثبت/به‌روزرسانی دستگاه ---
+    // ---------- Device (same logic) ----------
     const devRef = userRef.collection("devices").doc(deviceId);
     const devSnap = await devRef.get();
 
