@@ -1,202 +1,267 @@
-// api/apply-token.js
-import { db } from './firebase-admin.config.js'; // ← مطابق ساختار پروژه‌ی فعلی
-import admin from 'firebase-admin';
+// vite-project/api/apply-token.js
+// Serverless function for Vercel (Node.js runtime)
+// Mirrors TokenService.applyToken logic exactly using Firebase Admin (server-side)
 
-const { FieldValue, Timestamp } = admin.firestore;
+import { initializeApp, getApps, cert } from "firebase-admin/app";
+import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 
-function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-api-key');
+// ---------- Firebase Admin init ----------
+function initAdmin() {
+  if (!getApps().length) {
+    // Expect service account in env; adjust to your deployment style
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = (process.env.FIREBASE_PRIVATE_KEY || "").replace(/\\n/g, "\n");
+
+    if (!projectId || !clientEmail || !privateKey) {
+      throw new Error("Missing Firebase Admin credentials in env");
+    }
+    initializeApp({
+      credential: cert({ projectId, clientEmail, privateKey }),
+    });
+  }
+  return getFirestore();
 }
 
-// ترتیب جست‌وجو: اول codes (الگوی قدیمی)، بعد tokens
-const COLLECTIONS = [
-  process.env.TOKENS_COLLECTION_PRIMARY || 'codes',
-  process.env.TOKENS_COLLECTION_FALLBACK || 'tokens',
-];
-// فیلدهای محتمل برای ذخیره‌ی خودِ کُد
-const CODE_FIELDS = [
-  process.env.TOKEN_CODE_FIELD || 'code',
-  'token',
-  'value',
-];
+// ---------- Helpers ----------
+const asIntNullable = (v) => {
+  if (v == null) return null;
+  if (typeof v === "number") return Math.trunc(v);
+  if (typeof v === "string") {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  }
+  return null;
+};
 
-function norm(raw) {
-  return String(raw || '').trim();
+const normalizeEpochMs = (v) => {
+  if (v == null) return null;
+  if (v instanceof Date) return v.getTime();
+  const n = asIntNullable(v);
+  if (n != null) return n < 100000000000 ? n * 1000 : n; // sec → ms
+  const d = new Date(v);
+  return isNaN(d.getTime()) ? null : d.getTime();
+};
+
+function bad(res, status, error) {
+  return res.status(status).json({ success: false, error });
 }
 
-// بدنه‌ی JSON را مطمئن بخوان (برای vercel dev/vite proxy)
-async function readJsonBody(req) {
-  if (req.body && typeof req.body === 'object') return req.body;
+// ---------- Handler ----------
+export default async function handler(req, res) {
+  // Basic CORS (adjust domains if needed)
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return bad(res, 405, "Method Not Allowed");
+
+  let db;
   try {
-    const chunks = [];
-    for await (const chunk of req) {
-      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-    }
-    const raw = Buffer.concat(chunks).toString('utf8') || '';
-    return raw ? JSON.parse(raw) : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-async function findTokenRef(rawToken) {
-  const code = norm(rawToken);
-  if (!code) return { ref: null, where: 'empty' };
-
-  const variants = [code, code.toUpperCase(), code.toLowerCase()];
-
-  // 1) تلاش با DocID
-  for (const coll of COLLECTIONS) {
-    for (const v of variants) {
-      const ref = db.collection(coll).doc(v);
-      const snap = await ref.get();
-      if (snap.exists) return { ref, where: `docId:${coll}/${v}` };
-    }
+    db = initAdmin();
+  } catch (e) {
+    return bad(res, 500, `Admin init failed: ${e.message || e}`);
   }
 
-  // 2) تلاش با فیلدهای رایج (code/token/value)
-  for (const coll of COLLECTIONS) {
-    for (const field of CODE_FIELDS) {
-      for (const v of variants) {
-        const q = await db.collection(coll).where(field, '==', v).limit(1).get();
-        if (!q.empty) {
-          const doc = q.docs[0];
-          return { ref: doc.ref, where: `field:${coll}.${field}=${v}` };
+  const {
+    code: rawCode,
+    uid,
+    deviceId,
+    deviceModel,
+    language,
+    appVersion,
+    platform,
+    planType: planTypeInput,
+    maxDevices: maxDevicesInput,
+  } = req.body || {};
+
+  const code = (rawCode || "").trim();
+  if (!code) return bad(res, 400, "Missing code");
+  if (!uid) return bad(res, 400, "Missing uid");
+  if (!deviceId) return bad(res, 400, "Missing deviceId");
+
+  const nowMs = Date.now();
+  const codeRef = db.collection("codes").doc(code);
+  const userRef = db.collection("users").doc(uid);
+  const userDeviceRef = userRef.collection("devices").doc(deviceId);
+  const codeDeviceDocId = `${uid}_${deviceId}`;
+  const codeDeviceRef = codeRef.collection("devices").doc(codeDeviceDocId);
+  const activationRef = codeRef.collection("activations").doc(codeDeviceDocId);
+
+  try {
+    const result = await db.runTransaction(async (tx) => {
+      // 1) Read code doc
+      const codeSnap = await tx.get(codeRef);
+      if (!codeSnap.exists) throw new Error("Invalid code: not found");
+      const cdata = codeSnap.data() || {};
+
+      // plan / capacity / source
+      const planType = String(cdata.type ?? cdata.plan ?? planTypeInput ?? "premium");
+      const source = String(cdata.source ?? "code");
+      const maxDevices = asIntNullable(cdata.maxDevices ?? maxDevicesInput);
+      const validForDays = asIntNullable(cdata.validForDays);
+
+      // expiry resolve
+      let expiresAtMs = normalizeEpochMs(cdata.expiresAt ?? cdata.expiry);
+      if (expiresAtMs == null && validForDays && validForDays > 0) {
+        expiresAtMs = new Date(nowMs + validForDays * 86400000).getTime();
+      }
+      if (expiresAtMs != null && expiresAtMs <= nowMs) {
+        throw new Error("Code expired");
+      }
+
+      // activatedAt
+      const hasActivatedAt = cdata.activatedAt != null || cdata.activatedAtTs != null;
+      const activatedAtMs = hasActivatedAt ? (normalizeEpochMs(cdata.activatedAt) ?? nowMs) : nowMs;
+
+      // 2) code-device status
+      const codeDevSnap = await tx.get(codeDeviceRef);
+      const codeDevData = codeDevSnap.exists ? codeDevSnap.data() || {} : {};
+      const wasActive =
+        codeDevSnap.exists &&
+        (codeDevData.isActive === true || codeDevData.status === "active");
+
+      // capacity check
+      if (maxDevices != null && !wasActive) {
+        const currentlyUsed = asIntNullable(cdata.activeDevices) ?? 0;
+        if (currentlyUsed >= maxDevices) {
+          throw new Error("Code device capacity reached");
         }
       }
-    }
-  }
 
-  return { ref: null, where: 'not-found' };
-}
+      // 3) merge metadata on code doc
+      const codeMerge = {
+        source,
+        ...(hasActivatedAt
+          ? {}
+          : { activatedAt: activatedAtMs, status: "active" }),
+        ...(cdata.type == null ? { type: planType } : {}),
+      };
+      const hasExpiresAtOnCode = cdata.expiresAt != null || cdata.expiry != null;
+      if (expiresAtMs != null && !hasExpiresAtOnCode) {
+        codeMerge.expiresAt = expiresAtMs;
+      }
+      tx.set(codeRef, codeMerge, { merge: true });
 
-export default async function handler(req, res) {
-  cors(res);
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST') {
-    return res.status(405).json({ ok: false, error: 'Method Not Allowed' });
-  }
+      // 4) link/activate device under codes/{code}/devices/{uid_deviceId}
+      const deviceSet = {
+        uid,
+        deviceId,
+        status: "active",
+        isActive: true,
+        lastSeenAt: FieldValue.serverTimestamp(),
+      };
+      if (!codeDevSnap.exists || codeDevData.createdAt == null) {
+        deviceSet.createdAt = FieldValue.serverTimestamp();
+      }
+      tx.set(codeDeviceRef, deviceSet, { merge: true });
 
-  try {
-    const body = await readJsonBody(req);
-    const { uid, token, deviceId } = body || {};
-    if (!uid || !token || !deviceId) {
-      return res.status(400).json({ ok: false, error: 'uid, token, deviceId are required' });
-    }
+      // ++activeDevices if newly active
+      if (!wasActive) {
+        tx.set(
+          codeRef,
+          { activeDevices: FieldValue.increment(1), status: "active" },
+          { merge: true }
+        );
+      }
 
-    // لاگ تشخیصی واضح
-    console.log('[apply-token] pid=', process.env.FIREBASE_PROJECT_ID,
-      'collections=', COLLECTIONS, 'fields=', CODE_FIELDS, 'incoming=', token);
+      // 5) update users/{uid} flat aliases + plan + subscription mirror
+      const planObj = {
+        type: planType,
+        source,
+        status: "active",
+        codeId: code,
+        ...(validForDays != null ? { validForDays } : {}),
+        ...(maxDevices != null ? { maxDevices } : {}),
+        activatedAt: Timestamp.fromMillis(activatedAtMs),
+        ...(expiresAtMs != null ? { expiresAt: Timestamp.fromMillis(expiresAtMs) } : {}),
+      };
 
-    // پیدا کردن توکن دقیقاً با منطق بالا
-    const found = await findTokenRef(token);
-    if (!found.ref) {
-      console.warn('[apply-token] MISS where=', found.where, 'token=', token);
-      return res.status(404).json({ ok: false, error: 'Token not found' });
-    }
-    console.log('[apply-token] HIT where=', found.where);
-
-    const tokenRef = found.ref;
-    const snap = await tokenRef.get();
-    const data = snap.data() || {};
-
-    const {
-      type,              // 'premium' | 'gift'
-      durationDays,      // 15 | 30 | 60 | 90
-      maxDevices,        // Number
-      devices = [],      // Array<{deviceId, uid, linkedAt, lastActiveAt}>
-      isActive = true,   // Boolean
-      used = false,      // Boolean
-      expiresAt,         // Timestamp?
-    } = data;
-
-    if (!isActive) return res.status(400).json({ ok: false, error: 'Token is inactive' });
-    if (!durationDays || !type) {
-      return res.status(400).json({ ok: false, error: 'Token config invalid' });
-    }
-    if (expiresAt?.toDate && expiresAt.toDate() < new Date()) {
-      return res.status(400).json({ ok: false, error: 'Token expired' });
-    }
-
-    const now = new Date();
-    const already = Array.isArray(devices) ? devices.find(d => d.deviceId === deviceId) : null;
-
-    if (!already && typeof maxDevices === 'number' && Array.isArray(devices) && devices.length >= maxDevices) {
-      return res.status(409).json({ ok: false, error: 'No device slots left' });
-    }
-
-    // تمدید اشتراک کاربر (از expiry فعلی یا الان + durationDays)
-    const userRef = db.collection('users').doc(uid);
-    const userSnap = await userRef.get();
-
-    const currentExpiry = userSnap.exists && userSnap.data()?.subscription?.expiry?.toDate
-      ? userSnap.data().subscription.expiry.toDate()
-      : null;
-
-    const base = currentExpiry && currentExpiry > now ? currentExpiry : now;
-    const newExpiry = new Date(base.getTime());
-    newExpiry.setDate(newExpiry.getDate() + Number(durationDays));
-
-    const deviceEntry = {
-      deviceId,
-      uid,
-      linkedAt: Timestamp.fromDate(now),
-      lastActiveAt: Timestamp.fromDate(now),
-    };
-
-    const batch = db.batch();
-
-    if (!already) {
-      batch.update(tokenRef, {
-        devices: FieldValue.arrayUnion(deviceEntry),
-        used: (maxDevices === 1) ? true : (used ?? false),
-        updatedAt: Timestamp.now(),
-      });
-    } else {
-      const newDevices = devices.map(d =>
-        d.deviceId === deviceId ? { ...d, lastActiveAt: Timestamp.fromDate(now) } : d
-      );
-      batch.update(tokenRef, { devices: newDevices, updatedAt: Timestamp.now() });
-    }
-
-    batch.set(
-      userRef,
-      {
+      const userMerge = {
+        currentCode: code,
+        tokenId: code,
+        codeId: code,
+        ...(validForDays != null ? { validForDays } : {}),
+        ...(maxDevices != null ? { maxDevices } : {}),
+        ...(expiresAtMs != null ? { expiresAt: expiresAtMs } : {}),
+        source,
+        planType,
+        status: "active",
+        lastSeenAt: FieldValue.serverTimestamp(),
+        plan: planObj,
         subscription: {
-          plan: type,
-          expiry: Timestamp.fromDate(newExpiry),
-          lastAppliedAt: Timestamp.fromDate(now),
-          sourceToken: norm(token),
+          codeId: code,
+          source,
+          ...(expiresAtMs != null ? { expiresAt: expiresAtMs } : {}),
         },
-        devices: {
-          [deviceId]: { active: true, linkedAt: Timestamp.fromDate(now) },
+        // Optional: keep some context info if sent
+        ...(deviceModel ? { deviceModel } : {}),
+        ...(language ? { language } : {}),
+        ...(appVersion ? { appVersion } : {}),
+        ...(platform ? { platform } : {}),
+      };
+      tx.set(userRef, userMerge, { merge: true });
+
+      // 6) users/{uid}/devices/{deviceId}
+      tx.set(
+        userDeviceRef,
+        {
+          code,
+          tokenId: code,
+          status: "active",
+          isActive: true,
+          linkedCodeId: code,
+          planType,
+          activatedAt: Timestamp.fromMillis(activatedAtMs),
+          claimedAt: FieldValue.serverTimestamp(),
+          lastSeenAt: FieldValue.serverTimestamp(),
+          ...(deviceModel ? { deviceModel } : {}),
+          ...(platform ? { platform } : {}),
         },
-        updatedAt: Timestamp.now(),
-      },
-      { merge: true }
-    );
+        { merge: true }
+      );
 
-    await batch.commit();
+      // 7) activation log
+      tx.set(
+        activationRef,
+        {
+          uid,
+          deviceId,
+          planType,
+          source,
+          activatedAt: Timestamp.fromMillis(activatedAtMs),
+          ...(expiresAtMs != null ? { expiresAt: Timestamp.fromMillis(expiresAtMs) } : {}),
+          at: FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
 
-    const remaining =
-      typeof maxDevices === 'number'
-        ? Math.max(0, maxDevices - (already ? devices.length : devices.length + 1))
-        : null;
+      return {
+        planType,
+        maxDevices: maxDevices ?? null,
+        expiresAt: expiresAtMs ?? null,
+      };
+    });
 
     return res.status(200).json({
-      ok: true,
-      token: norm(token),
-      plan: type,
-      durationDays,
-      user: { uid },
-      device: { deviceId },
-      remainingSlots: remaining,
-      expiryISO: newExpiry.toISOString(),
+      success: true,
+      planType: result.planType,
+      maxDevices: result.maxDevices,
+      expiresAt: result.expiresAt,
     });
-  } catch (err) {
-    console.error('[apply-token] error:', err);
-    return res.status(500).json({ ok: false, error: String(err?.message || err) });
+  } catch (e) {
+    // Normalize common errors
+    const msg = (e && e.message) ? e.message : String(e);
+    const status =
+      msg.includes("not found") || msg.toLowerCase().includes("invalid code")
+        ? 404
+        : msg.toLowerCase().includes("expired")
+        ? 410
+        : msg.toLowerCase().includes("capacity")
+        ? 409
+        : 400;
+
+    return bad(res, status, msg);
   }
 }
