@@ -17,7 +17,6 @@ async function readJsonBody(req) {
 
 // تولید یک uid تصادفی (بدون Firebase Auth)
 function randomUid() {
-  // دو بخش 16 کاراکتری برای کاهش احتمال برخورد
   return (
     Math.random().toString(36).slice(2, 10) +
     Math.random().toString(36).slice(2, 10) +
@@ -28,15 +27,12 @@ function randomUid() {
 // بررسی و ساخت uid در صورت نبود
 async function ensureUid(incomingUid) {
   if (incomingUid && typeof incomingUid === "string" && incomingUid.trim()) return incomingUid;
-
-  // ایجاد uid جدید و چک برخورد سند کاربر (احتمال بسیار کم)
   for (let i = 0; i < 5; i++) {
     const uid = randomUid();
     const userRef = db.collection("users").doc(uid);
     const snap = await userRef.get();
     if (!snap.exists) return uid;
   }
-  // اگر ۵ بار پشت‌سرهم برخورد داشتیم (خیلی نادر)، آخرین مقدار را برگردان
   return randomUid();
 }
 
@@ -65,8 +61,11 @@ export default async function handler(req, res) {
 
     const userData = {
       uid,
-      // فقط فیلدهایی که از deviceInfo معنا دارند را به پروفایل ببریم (اختیاری)
+      // فیلدهای معنادار از deviceInfo → سطح پروفایل
       language: deviceInfo.language ?? FieldValue.delete(),
+      platform: deviceInfo.platform ?? FieldValue.delete(),
+      deviceModel: deviceInfo.model ?? FieldValue.delete(),
+      osVersion: deviceInfo.osVersion ?? FieldValue.delete(),
       appVersion: deviceInfo.appVersion ?? FieldValue.delete(),
       lastSeenAt: now,
       updatedAt: now,
