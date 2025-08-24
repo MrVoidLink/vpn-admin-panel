@@ -3,11 +3,5 @@
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/admin/:match*", "destination": "/" },
     { "source": "/:match*", "destination": "/" }
-  ],
-  "crons": [
-    {
-      "path": "/api/update-pings",
-      "schedule": "*/10 * * * *"
-    }
   ]
 }
