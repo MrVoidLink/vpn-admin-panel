@@ -3,12 +3,11 @@
 // Method: GET (and OPTIONS for CORS preflight)
 // Query params (optional):
 //   - type=free|premium
-//   - protocol=wireguard|openvpn
+//   - protocol=wireguard|openvpn|l2tp|pptp|v2ray
 //   - limit=number (default 100, max 500)
 //
 // Response:
-//   200: { ok: true, servers: [ { id, name, country, host, port, protocol, type } ] }
-//   4xx/5xx: { ok: false, error: "..." }
+//   200: { ok: true, servers: [ { id, name, country, host, port, protocol, type, pingMs, status } ] }
 
 import { db } from "../lib/firebase-admin.js";
 
@@ -43,7 +42,7 @@ export default async function handler(req, res) {
     if (type) q = q.where("serverType", "==", String(type).toLowerCase());
     if (protocol) q = q.where("protocol", "==", String(protocol).toLowerCase());
 
-    // order by createdAt if available (ignore if field/index missing)
+    // order by createdAt if available
     try {
       q = q.orderBy("createdAt", "desc");
     } catch (_) {
@@ -60,8 +59,11 @@ export default async function handler(req, res) {
         country: m.country || m.countryCode || "",
         host: m.ipAddress || m.host || "",
         port: Number(m.port) || null,
-        protocol: (m.protocol || "").toLowerCase(),      // "wireguard" | "openvpn"
-        type: (m.serverType || m.type || "").toLowerCase(), // "free" | "premium"
+        protocol: (m.protocol || "").toLowerCase(),
+        type: (m.serverType || m.type || "").toLowerCase(),
+        status: (m.status || "active").toLowerCase(),
+        // 🔹 اضافه شد: pingMs (اختیاری)
+        pingMs: Number.isFinite(m.pingMs) ? Number(m.pingMs) : null,
       };
     });
 
