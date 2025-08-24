@@ -6,9 +6,6 @@
     { "source": "/:match*", "destination": "/" }
   ],
   "crons": [
-    {
-      "path": "/api/update-pings",
-      "schedule": "*/10 * * * *"
-    }
+    { "path": "/api/update-pings", "schedule": "*/10 * * * *" }
   ]
 }
