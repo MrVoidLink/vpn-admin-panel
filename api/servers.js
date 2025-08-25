@@ -1,7 +1,4 @@
-// File: api/servers.js
-// Read-only endpoint for the app to fetch server list (ONLY V2 family)
-export const runtime = 'nodejs';
-
+// /api/servers.js
 import { db } from "../lib/firebase-admin.js";
 
 function allowCORS(res) {
@@ -14,52 +11,51 @@ export default async function handler(req, res) {
   allowCORS(res);
 
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  if (req.method !== "GET") {
+    return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  }
 
   try {
-    const { type } = req.query;
+    const limitRaw = Array.isArray(req.query.limit) ? req.query.limit[0] : req.query.limit;
+    const typeRaw  = Array.isArray(req.query.type)  ? req.query.type[0]  : req.query.type;
 
-    let limit = parseInt(req.query.limit || "100", 10);
-    if (!Number.isFinite(limit) || limit <= 0) limit = 100;
-    if (limit > 500) limit = 500;
+    let limit = parseInt(limitRaw ?? "100", 10);
+    if (!Number.isFinite(limit) || limit <= 0 || limit > 1000) limit = 100;
 
-    // فقط V2 (مثل قبل) + فقط active
-    let q = db
-      .collection("servers")
-      .where("protocol", "in", ["v2ray", "vmess", "vless"])
-      .where("status", "==", "active");
+    const type = (typeRaw || "").toString().trim().toLowerCase(); // "free" | "premium" | ""
 
-    if (type) q = q.where("serverType", "==", String(type).toLowerCase());
+    // ✅ فقط سرورهای active با پروتکل v2ray
+    let q = db.collection("servers")
+      .where("status", "==", "active")
+      .where("protocol", "==", "v2ray");
 
-    try {
-      q = q.orderBy("createdAt", "desc");
-    } catch (_) {
-      // بدون ایندکس/فیلد هم ادامه می‌دیم
+    if (type === "free" || type === "premium") {
+      q = q.where("serverType", "==", type);
     }
 
-    const snap = await q.limit(limit).get();
+    q = q.limit(limit);
+
+    const snap = await q.get();
 
     const servers = snap.docs.map((d) => {
-      const m = d.data() || {};
+      const v = d.data() || {};
       return {
         id: d.id,
-        name: m.serverName || m.name || "",
-        country: m.country || m.countryCode || "",
-        host: m.ipAddress || m.host || "",
-        port: Number(m.port) || null,
-        protocol: (m.protocol || "").toLowerCase(),           // v2ray|vmess|vless
-        type: (m.serverType || m.type || "").toLowerCase(),   // free|premium
-        status: (m.status || "active").toLowerCase(),
-        pingMs: Number.isFinite(m.pingMs) ? Number(m.pingMs) : null,
+        name: v.serverName ?? "",
+        host: v.ipAddress ?? "",
+        port: Number(v.port) || null,
+        country: v.country ?? "",
+        city: v.location ?? "",
+        type: v.serverType ?? null,      // free | premium
+        protocol: v.protocol ?? "v2ray",
+        pingMs: v.pingMs ?? null,
+        load: v.load ?? null,
       };
     });
 
     return res.status(200).json({ ok: true, servers });
   } catch (e) {
-    console.error("GET /api/servers failed:", e);
-    if (process.env.DEBUG === "1") {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
+    console.error("GET /api/servers error:", e);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
   }
 }

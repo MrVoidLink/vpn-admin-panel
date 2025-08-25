@@ -1,5 +1,4 @@
 // /api/server-config.js
-// Get a full connection config for a given server id
 export const runtime = 'nodejs';
 
 import { db } from "../lib/firebase-admin.js";
@@ -14,7 +13,9 @@ export default async function handler(req, res) {
   allowCORS(res);
 
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  if (req.method !== "GET") {
+    return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
+  }
 
   const id = String(req.query.id || "").trim();
   if (!id) return res.status(400).json({ ok: false, error: "MISSING_ID" });
@@ -31,16 +32,18 @@ export default async function handler(req, res) {
       return res.status(403).json({ ok: false, error: "SERVER_INACTIVE" });
     }
 
+    // فقط خانواده v2ray
     const protocol = String(s.protocol || "").toLowerCase();
-    if (!["v2ray", "vmess", "vless"].includes(protocol)) {
+    if (protocol !== "v2ray") {
       return res.status(400).json({ ok: false, error: "ONLY_V2RAY_SUPPORTED" });
     }
 
     // ---------- V2RAY ----------
     const cfg = {
-      type:    String(s.v2rayType || "").toLowerCase(),        // vless|vmess
+      // زیرنوع: vless | vmess  (اجباری)
+      type:    String(s.v2rayType || "").toLowerCase(),
       uuid:    String(s.v2rayUuid || ""),
-      network: String(s.v2rayNetwork || "").toLowerCase(),     // ws|grpc|tcp
+      network: String(s.v2rayNetwork || "").toLowerCase(), // ws|grpc|tcp
       host:    String(s.v2rayHost || ""),
       path:    String(s.v2rayPath || ""),
       sni:     String(s.v2raySni || ""),
@@ -66,9 +69,6 @@ export default async function handler(req, res) {
     });
   } catch (e) {
     console.error("GET /api/server-config failed:", e);
-    if (process.env.DEBUG === "1") {
-      return res.status(500).json({ ok: false, error: String(e?.message || e) });
-    }
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
   }
 }
