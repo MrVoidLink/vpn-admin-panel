@@ -1,13 +1,20 @@
 // /api/add-server.js
+export const runtime = 'nodejs';
+
 import { db } from "../lib/firebase-admin.js";
 
-// فقط پروتکل‌های V2Ray مجاز
 const ALLOWED_PROTOCOLS = ["v2ray", "vmess", "vless"];
 
+function allowCORS(res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+}
+
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ message: "Method not allowed" });
-  }
+  allowCORS(res);
+  if (req.method === "OPTIONS") return res.status(200).end();
+  if (req.method !== "POST") return res.status(405).json({ message: "Method not allowed" });
 
   try {
     const body = req.body || {};
@@ -49,7 +56,7 @@ export default async function handler(req, res) {
 
     // ---------- Protocol-specific validation ----------
     const protoErrors = [];
-    if (protocol === "v2ray" || protocol === "vmess" || protocol === "vless") {
+    if (["v2ray", "vmess", "vless"].includes(protocol)) {
       const v2rayType    = String(body.v2rayType || "").toLowerCase().trim();   // vless|vmess
       const v2rayUuid    = String(body.v2rayUuid || "").trim();
       const v2rayNetwork = String(body.v2rayNetwork || "").toLowerCase().trim(); // ws|grpc|tcp
@@ -66,17 +73,17 @@ export default async function handler(req, res) {
       });
     }
 
-    // ---------- Assemble payload to store ----------
+    // ---------- Assemble payload ----------
     const payload = {
       serverName,
       ipAddress,
       port,
-      protocol,       // normalized
-      serverType,     // normalized
+      protocol,
+      serverType,
       maxConnections,
       location,
       country,
-      status,         // normalized
+      status,
       description,
       createdAt: new Date(),
     };
@@ -86,7 +93,7 @@ export default async function handler(req, res) {
       payload.pingCheckedAt = new Date();
     }
 
-    if (protocol === "v2ray" || protocol === "vmess" || protocol === "vless") {
+    if (["v2ray", "vmess", "vless"].includes(protocol)) {
       payload.v2rayType    = String(body.v2rayType || "").toLowerCase().trim();
       payload.v2rayUuid    = String(body.v2rayUuid || "").trim();
       payload.v2rayNetwork = String(body.v2rayNetwork || "").toLowerCase().trim();
@@ -103,8 +110,9 @@ export default async function handler(req, res) {
     return res.status(200).json({ message: "Server added successfully", id: ref.id });
   } catch (error) {
     console.error("Error adding server:", error);
-    return res
-      .status(500)
-      .json({ message: "Failed to add server", error: error.message });
+    if (process.env.DEBUG === "1") {
+      return res.status(500).json({ message: "Failed to add server", error: String(error?.message || error) });
+    }
+    return res.status(500).json({ message: "Failed to add server", error: "INTERNAL_ERROR" });
   }
 }
