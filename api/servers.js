@@ -1,9 +1,8 @@
 // File: api/servers.js
-// Purpose: Read-only endpoint for the app to fetch server list
+// Purpose: Read-only endpoint for the app to fetch server list (ONLY V2RAY)
 // Method: GET (and OPTIONS for CORS preflight)
 // Query params (optional):
 //   - type=free|premium
-//   - protocol=wireguard|openvpn|l2tp|pptp|v2ray
 //   - limit=number (default 100, max 500)
 //
 // Response:
@@ -29,18 +28,20 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { type, protocol } = req.query;
+    const { type } = req.query;
 
     // safe limit
     let limit = parseInt(req.query.limit || "100", 10);
     if (!Number.isFinite(limit) || limit <= 0) limit = 100;
     if (limit > 500) limit = 500;
 
-    let q = db.collection("servers");
+    // فقط سرورهای V2Ray/vmess/vless
+    let q = db
+      .collection("servers")
+      .where("protocol", "in", ["v2ray", "vmess", "vless"]);
 
-    // optional filters (make sure your stored values are lowercase)
+    // optional filters (stored lowercase)
     if (type) q = q.where("serverType", "==", String(type).toLowerCase());
-    if (protocol) q = q.where("protocol", "==", String(protocol).toLowerCase());
 
     // order by createdAt if available
     try {
@@ -51,21 +52,22 @@ export default async function handler(req, res) {
 
     const snap = await q.limit(limit).get();
 
-    const servers = snap.docs.map((d) => {
-      const m = d.data() || {};
-      return {
-        id: d.id,
-        name: m.serverName || m.name || "",
-        country: m.country || m.countryCode || "",
-        host: m.ipAddress || m.host || "",
-        port: Number(m.port) || null,
-        protocol: (m.protocol || "").toLowerCase(),
-        type: (m.serverType || m.type || "").toLowerCase(),
-        status: (m.status || "active").toLowerCase(),
-        // 🔹 اضافه شد: pingMs (اختیاری)
-        pingMs: Number.isFinite(m.pingMs) ? Number(m.pingMs) : null,
-      };
-    });
+    const servers = snap.docs
+      .map((d) => {
+        const m = d.data() || {};
+        return {
+          id: d.id,
+          name: m.serverName || m.name || "",
+          country: m.country || m.countryCode || "",
+          host: m.ipAddress || m.host || "",
+          port: Number(m.port) || null,
+          protocol: (m.protocol || "").toLowerCase(),   // v2ray|vmess|vless
+          type: (m.serverType || m.type || "").toLowerCase(), // free|premium
+          status: (m.status || "active").toLowerCase(),
+          // optional:
+          pingMs: Number.isFinite(m.pingMs) ? Number(m.pingMs) : null,
+        };
+      });
 
     return res.status(200).json({ ok: true, servers });
   } catch (e) {

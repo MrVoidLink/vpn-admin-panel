@@ -1,7 +1,8 @@
 // /api/add-server.js
 import { db } from "../lib/firebase-admin.js";
 
-const ALLOWED_PROTOCOLS = ["openvpn", "wireguard", "l2tp", "pptp", "v2ray"];
+// فقط پروتکل‌های V2Ray مجاز
+const ALLOWED_PROTOCOLS = ["v2ray", "vmess", "vless"];
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -48,41 +49,11 @@ export default async function handler(req, res) {
 
     // ---------- Protocol-specific validation ----------
     const protoErrors = [];
-
-    if (protocol === "openvpn") {
-      const configFileUrl = String(body.configFileUrl || "").trim();
-      if (!configFileUrl) protoErrors.push("configFileUrl");
-    }
-
-    if (protocol === "wireguard") {
-      const wgPublicKey = String(body.wgPublicKey || "").trim();
-      const wgEndpoint  = String(body.wgEndpoint || "").trim(); // e.g. 1.2.3.4:51820
-      if (!wgPublicKey) protoErrors.push("wgPublicKey");
-      if (!wgEndpoint)  protoErrors.push("wgEndpoint");
-      // optional: wgDns, wgAllowedIPs
-    }
-
-    if (protocol === "l2tp") {
-      const l2tpPsk  = String(body.l2tpPsk || "").trim();
-      const l2tpUser = String(body.l2tpUser || "").trim();
-      const l2tpPass = String(body.l2tpPass || "").trim();
-      if (!l2tpPsk)  protoErrors.push("l2tpPsk");
-      if (!l2tpUser) protoErrors.push("l2tpUser");
-      if (!l2tpPass) protoErrors.push("l2tpPass");
-    }
-
-    if (protocol === "pptp") {
-      const pptpUser = String(body.pptpUser || "").trim();
-      const pptpPass = String(body.pptpPass || "").trim();
-      if (!pptpUser) protoErrors.push("pptpUser");
-      if (!pptpPass) protoErrors.push("pptpPass");
-    }
-
-    if (protocol === "v2ray") {
-      const v2rayType    = String(body.v2rayType || "").toLowerCase().trim();   // vless|vmess|...
+    if (protocol === "v2ray" || protocol === "vmess" || protocol === "vless") {
+      const v2rayType    = String(body.v2rayType || "").toLowerCase().trim();   // vless|vmess
       const v2rayUuid    = String(body.v2rayUuid || "").trim();
       const v2rayNetwork = String(body.v2rayNetwork || "").toLowerCase().trim(); // ws|grpc|tcp
-      // optional: v2rayPath, v2rayHost, v2raySni, v2rayTls, v2rayFlow
+
       if (!v2rayType)    protoErrors.push("v2rayType");
       if (!v2rayUuid)    protoErrors.push("v2rayUuid");
       if (!v2rayNetwork) protoErrors.push("v2rayNetwork");
@@ -97,7 +68,6 @@ export default async function handler(req, res) {
 
     // ---------- Assemble payload to store ----------
     const payload = {
-      // base
       serverName,
       ipAddress,
       port,
@@ -116,30 +86,7 @@ export default async function handler(req, res) {
       payload.pingCheckedAt = new Date();
     }
 
-    // protocol-specific (store as-is if present)
-    if (protocol === "openvpn") {
-      payload.configFileUrl = String(body.configFileUrl || "").trim();
-    }
-
-    if (protocol === "wireguard") {
-      payload.wgPublicKey  = String(body.wgPublicKey || "").trim();
-      payload.wgEndpoint   = String(body.wgEndpoint || "").trim();
-      payload.wgDns        = String(body.wgDns ?? "1.1.1.1").trim();
-      payload.wgAllowedIPs = String(body.wgAllowedIPs ?? "0.0.0.0/0, ::/0").trim();
-    }
-
-    if (protocol === "l2tp") {
-      payload.l2tpPsk  = String(body.l2tpPsk || "").trim();
-      payload.l2tpUser = String(body.l2tpUser || "").trim();
-      payload.l2tpPass = String(body.l2tpPass || "").trim();
-    }
-
-    if (protocol === "pptp") {
-      payload.pptpUser = String(body.pptpUser || "").trim();
-      payload.pptpPass = String(body.pptpPass || "").trim();
-    }
-
-    if (protocol === "v2ray") {
+    if (protocol === "v2ray" || protocol === "vmess" || protocol === "vless") {
       payload.v2rayType    = String(body.v2rayType || "").toLowerCase().trim();
       payload.v2rayUuid    = String(body.v2rayUuid || "").trim();
       payload.v2rayNetwork = String(body.v2rayNetwork || "").toLowerCase().trim();
