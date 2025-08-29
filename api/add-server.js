@@ -15,6 +15,7 @@ const toNum = (v, d = undefined) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : d;
 };
+const S = (v) => (v == null ? "" : String(v).trim());
 
 export default async function handler(req, res) {
   allowCORS(res);
@@ -28,14 +29,14 @@ export default async function handler(req, res) {
     const body = req.body || {};
 
     // ---------- Common fields ----------
-    const serverName     = String(body.serverName || "").trim();
-    const ipAddress      = String(body.ipAddress  || body.host || "").trim();
-    const serverType     = String(body.serverType || "free").toLowerCase().trim(); // free|premium
+    const serverName     = S(body.serverName);
+    const ipAddress      = S(body.ipAddress || body.host);
+    const serverType     = S(body.serverType || "free").toLowerCase(); // free|premium
     const maxConnections = toNum(body.maxConnections, 10);
-    const location       = String(body.location   || "").trim();
-    const country        = String(body.country    || "").trim();
-    const status         = String(body.status     || "active").toLowerCase().trim(); // active|inactive
-    const description    = String(body.description|| "").trim();
+    const location       = S(body.location);
+    const country        = S(body.country);
+    const status         = S(body.status || "active").toLowerCase();   // active|inactive
+    const description    = S(body.description);
     const pingMs         = (body.pingMs === "" || body.pingMs == null) ? null : toNum(body.pingMs);
 
     // ---------- Variants (array of connection options) ----------
@@ -58,13 +59,17 @@ export default async function handler(req, res) {
     } else {
       variants.forEach((raw, idx) => {
         const vErr = [];
-        const protocol = String(raw.protocol || "").toLowerCase().trim();
+        const protocol = S(raw.protocol).toLowerCase();
 
         if (!["openvpn", "wireguard"].includes(protocol)) {
           vErr.push(`variants[${idx}].protocol`);
         }
 
         if (protocol === "openvpn") {
+          const ovpnProto = (S(raw.ovpnProto) || "udp").toLowerCase(); // NEW
+          if (!["udp", "tcp"].includes(ovpnProto)) {
+            vErr.push(`variants[${idx}].ovpnProto`);
+          }
           const port = toNum(raw.port);
           if (!Number.isFinite(port) || port < 1 || port > 65535) {
             vErr.push(`variants[${idx}].port`);
@@ -76,6 +81,7 @@ export default async function handler(req, res) {
         }
 
         if (protocol === "wireguard") {
+          // endpointHost اختیاری؛ اگر نباشد از ipAddress پایه استفاده می‌کنیم
           const endpointPort = toNum(raw.endpointPort);
           if (!Number.isFinite(endpointPort) || endpointPort < 1 || endpointPort > 65535) {
             vErr.push(`variants[${idx}].endpointPort`);
@@ -89,7 +95,7 @@ export default async function handler(req, res) {
           if (raw.mtu != null && !Number.isFinite(toNum(raw.mtu))) {
             vErr.push(`variants[${idx}].mtu`);
           }
-          // address/dns/allowedIps/preSharedKey همگی اختیاری‌اند (فرمت دقیق را اگر نیاز داشتی اضافه می‌کنیم)
+          // address/dns/allowedIps/preSharedKey اختیاری‌اند
         }
 
         if (vErr.length) errors.push(...vErr);
@@ -101,6 +107,10 @@ export default async function handler(req, res) {
     }
 
     // ---------- Write: server base ----------
+    const protocolsSet = new Set(
+      variants.map(v => S(v.protocol).toLowerCase()).filter(Boolean)
+    );
+
     const serverPayload = {
       serverName,
       ipAddress,
@@ -111,13 +121,12 @@ export default async function handler(req, res) {
       status,
       description,
       ...(pingMs != null ? { pingMs } : {}),
-      // اطلاعات خلاصه برای سریع‌تر شدن کوئری‌ها
-      protocols: Array.from(new Set(variants.map(v => String(v.protocol || "").toLowerCase().trim()))),
+      // خلاصه برای کوئری‌های سریع
+      protocols: Array.from(protocolsSet),
       variantsCount: variants.length,
       createdAt: new Date().toISOString(),
     };
 
-    // base doc in 'servers'
     const ref = await db.collection("servers").add(serverPayload);
 
     // ---------- Write: variants (subcollection: servers/{id}/variants) ----------
@@ -125,16 +134,18 @@ export default async function handler(req, res) {
     const variantsCol = db.collection("servers").doc(ref.id).collection("variants");
 
     variants.forEach((raw) => {
-      const protocol = String(raw.protocol || "").toLowerCase().trim();
+      const protocol = S(raw.protocol).toLowerCase();
 
       if (protocol === "openvpn") {
         const vDoc = variantsCol.doc();
+        const ovpnProto = (S(raw.ovpnProto) || "udp").toLowerCase(); // NEW
         batch.set(vDoc, {
           protocol: "openvpn",
+          ovpnProto,                                           // NEW (udp|tcp)
           port: toNum(raw.port, 1194),
-          ...(raw.configFileUrl ? { configFileUrl: String(raw.configFileUrl).trim() } : {}),
-          ...(raw.username ? { username: String(raw.username).trim() } : {}),
-          ...(raw.password ? { password: String(raw.password).trim() } : {}),
+          ...(raw.configFileUrl ? { configFileUrl: S(raw.configFileUrl) } : {}),
+          ...(raw.username ?      { username:      S(raw.username)      } : {}),
+          ...(raw.password ?      { password:      S(raw.password)      } : {}),
           // اتصال سمت کلاینت از ipAddress پایه استفاده می‌کند
           meta: { host: ipAddress },
           createdAt: new Date().toISOString(),
@@ -143,16 +154,18 @@ export default async function handler(req, res) {
 
       if (protocol === "wireguard") {
         const vDoc = variantsCol.doc();
+        const endpointHost = S(raw.endpointHost) || ipAddress; // NEW (fallback)
         batch.set(vDoc, {
           protocol: "wireguard",
+          endpointHost,                                       // NEW
           endpointPort: toNum(raw.endpointPort, 51820),
-          ...(raw.publicKey ? { publicKey: String(raw.publicKey).trim() } : {}),
-          ...(raw.address ? { address: String(raw.address).trim() } : {}),
-          ...(raw.dns ? { dns: String(raw.dns).trim() } : {}),
-          ...(raw.allowedIps ? { allowedIps: String(raw.allowedIps).trim() } : {}),
+          ...(raw.publicKey ?           { publicKey:           S(raw.publicKey)           } : {}),
+          ...(raw.address ?             { address:             S(raw.address)             } : {}),
+          ...(raw.dns ?                 { dns:                 S(raw.dns)                 } : {}),
+          ...(raw.allowedIps ?          { allowedIps:          S(raw.allowedIps)          } : {}),
           ...(raw.persistentKeepalive != null ? { persistentKeepalive: toNum(raw.persistentKeepalive) } : {}),
-          ...(raw.mtu != null ? { mtu: toNum(raw.mtu) } : {}),
-          ...(raw.preSharedKey ? { preSharedKey: String(raw.preSharedKey).trim() } : {}),
+          ...(raw.mtu != null ?         { mtu:                 toNum(raw.mtu)             } : {}),
+          ...(raw.preSharedKey ?        { preSharedKey:        S(raw.preSharedKey)        } : {}),
           meta: { host: ipAddress },
           createdAt: new Date().toISOString(),
         });
