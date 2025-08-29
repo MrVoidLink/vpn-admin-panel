@@ -26,17 +26,16 @@ const isBase64ish = (s) => /^[A-Za-z0-9+/=]{32,}$/.test(S(s));
 export default function ServerManagement() {
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [expandedId, setExpandedId] = useState(null); // ردیف بازشده
+  const [expandedId, setExpandedId] = useState(null);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [protocolFilter, setProtocolFilter] = useState("");
 
-  // بارگذاری لیست سرورها از API
   const fetchServers = async () => {
     setLoading(true);
     try {
       const { data } = await axios.get("/api/server-management", {
-        params: { action: "list" }, // خواناتر
+        params: { action: "list" },
       });
       if (!data?.ok) throw new Error(data?.message || "Failed to load servers");
       setServers(data.servers || []);
@@ -51,7 +50,6 @@ export default function ServerManagement() {
     fetchServers();
   }, []);
 
-  // فیلتر/جست‌وجو در کلاینت (ساده)
   const visibleServers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return servers.filter((s) => {
@@ -68,7 +66,6 @@ export default function ServerManagement() {
     });
   }, [servers, search, typeFilter, protocolFilter]);
 
-  // حذف سرور (و همه variants) از API
   const deleteServer = async (serverId) => {
     const ok = window.confirm("Delete this server and ALL its variants?");
     if (!ok) return;
@@ -85,7 +82,6 @@ export default function ServerManagement() {
     }
   };
 
-  // تازه‌سازی یک ردیف (بعد از ذخیره‌ی inline یا تغییر variants)
   const refreshOneRow = async (id) => {
     try {
       const { data } = await axios.get("/api/server-management", {
@@ -94,50 +90,25 @@ export default function ServerManagement() {
       if (data?.ok && data.server) {
         setServers((prev) => prev.map((s) => (s.id === id ? data.server : s)));
       }
-    } catch (e) {
-      // بی‌صدا
-    }
+    } catch {}
   };
 
   return (
     <section className="w-full space-y-6">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <FaServer className="text-blue-600 text-3xl" />
-          <div>
-            <h1 className="text-2xl font-bold">Server Management</h1>
-            <span className="text-gray-500 text-sm">
-              Total: <b>{servers.length}</b> | Visible: <b>{visibleServers.length}</b>
+      <div className="flex flex-col gap-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-blue-100 text-blue-700">
+              <FaServer />
             </span>
+            <div>
+              <h1 className="text-2xl font-bold">Server Management</h1>
+              <span className="text-gray-500 text-sm">
+                Total: <b>{servers.length}</b> • Visible: <b>{visibleServers.length}</b>
+              </span>
+            </div>
           </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3">
-          <input
-            placeholder="Search name / IP / location / country"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="border px-3 py-2 rounded w-[280px]"
-          />
-          <select
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-            className="border px-3 py-2 rounded"
-          >
-            <option value="">All types</option>
-            <option value="free">Free</option>
-            <option value="premium">Premium</option>
-          </select>
-          <select
-            value={protocolFilter}
-            onChange={(e) => setProtocolFilter(e.target.value)}
-            className="border px-3 py-2 rounded"
-          >
-            <option value="">All protocols</option>
-            <option value="openvpn">OpenVPN</option>
-            <option value="wireguard">WireGuard</option>
-          </select>
           <button
             className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg shadow hover:bg-blue-700 active:scale-95 transition-all"
             onClick={fetchServers}
@@ -147,12 +118,43 @@ export default function ServerManagement() {
             {loading ? "Loading..." : "Refresh"}
           </button>
         </div>
+
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3 rounded-xl bg-white p-3 shadow-sm border">
+          <input
+            placeholder="Search name / IP / location / country"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border px-3 py-2 rounded w-[260px] focus:outline-none focus:ring-2 focus:ring-blue-200"
+          />
+          <select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="">All types</option>
+            <option value="free">Free</option>
+            <option value="premium">Premium</option>
+          </select>
+          <select
+            value={protocolFilter}
+            onChange={(e) => setProtocolFilter(e.target.value)}
+            className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+          >
+            <option value="">All protocols</option>
+            <option value="openvpn">OpenVPN</option>
+            <option value="wireguard">WireGuard</option>
+          </select>
+          <div className="ml-auto text-xs text-gray-500">
+            Tip: Click a row arrow to expand details, edit, and variants.
+          </div>
+        </div>
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto bg-white rounded-xl shadow-md">
+      <div className="overflow-x-auto bg-white rounded-xl shadow border">
         <table className="min-w-full border-separate border-spacing-0">
-          <thead className="bg-gray-100 text-sm text-gray-700 sticky top-0 z-10">
+          <thead className="bg-gray-50 text-sm text-gray-700 sticky top-0 z-10">
             <tr>
               <th className="p-4 text-left rounded-tl-xl w-10"></th>
               <th className="p-4 text-left">Name</th>
@@ -166,11 +168,14 @@ export default function ServerManagement() {
               <th className="p-4 text-left rounded-tr-xl">Actions</th>
             </tr>
           </thead>
+
           <tbody className="text-sm">
-            {visibleServers.length === 0 && !loading ? (
+            {loading ? (
+              <SkeletonRows />
+            ) : visibleServers.length === 0 ? (
               <tr>
-                <td colSpan={10} className="text-center py-8 text-gray-500">
-                  No servers to show.
+                <td colSpan={10} className="py-16">
+                  <EmptyState />
                 </td>
               </tr>
             ) : (
@@ -178,50 +183,59 @@ export default function ServerManagement() {
                 <React.Fragment key={srv.id}>
                   <tr
                     className={`border-b last:border-none ${
-                      expandedId === srv.id ? "bg-blue-50/40" : ""
-                    }`}
+                      idx % 2 ? "bg-gray-50/40" : "bg-white"
+                    } ${expandedId === srv.id ? "ring-1 ring-blue-200" : ""}`}
                   >
                     <td className="p-4 align-top">
                       <button
                         className="p-1 rounded border hover:bg-gray-100"
-                        onClick={async () => {
-                          const willOpen = expandedId !== srv.id;
-                          setExpandedId((id) => (id === srv.id ? null : srv.id));
-                          if (willOpen) {
-                            // lazy-load variants when opening
-                            // handled inside the expanded row component
-                          }
-                        }}
+                        onClick={() =>
+                          setExpandedId((id) => (id === srv.id ? null : srv.id))
+                        }
                         aria-label="Toggle row"
+                        title="Expand"
                       >
                         {expandedId === srv.id ? <FaChevronDown /> : <FaChevronRight />}
                       </button>
                     </td>
-                    <td className="p-4">{srv.serverName || "-"}</td>
+                    <td className="p-4 font-medium">{srv.serverName || "-"}</td>
                     <td className="p-4">{srv.ipAddress || srv.host || "-"}</td>
-                    <td className="p-4 capitalize">{srv.serverType || "-"}</td>
+                    <td className="p-4">
+                      <Badge
+                        color={S(srv.serverType) === "premium" ? "amber" : "blue"}
+                        text={srv.serverType || "-"}
+                        capitalize
+                      />
+                    </td>
                     <td className="p-4">{srv.location || "-"}</td>
                     <td className="p-4">{srv.country || "-"}</td>
                     <td className="p-4">
-                      {Array.isArray(srv.protocols) && srv.protocols.length
-                        ? srv.protocols.join(", ")
-                        : "-"}
+                      {Array.isArray(srv.protocols) && srv.protocols.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {srv.protocols.map((p) => (
+                            <Badge key={p} color={p === "openvpn" ? "green" : "purple"} text={p} capitalize />
+                          ))}
+                        </div>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td className="p-4">{typeof srv.variantsCount === "number" ? srv.variantsCount : "-"}</td>
+                    <td className="p-4">
+                      {srv.pingMs != null ? (
+                        <Badge color={srv.pingMs < 120 ? "green" : srv.pingMs < 220 ? "amber" : "red"} text={`${srv.pingMs} ms`} />
+                      ) : (
+                        "-"
+                      )}
                     </td>
                     <td className="p-4">
-                      {typeof srv.variantsCount === "number"
-                        ? srv.variantsCount
-                        : "-"}
-                    </td>
-                    <td className="p-4">{srv.pingMs ?? "-"}</td>
-                    <td className="p-4">
-                      <div className="flex items-center gap-2">
-                        <button
-                          className="px-3 py-1 rounded border text-red-700 hover:bg-red-50"
-                          onClick={() => deleteServer(srv.id)}
-                        >
-                          <FaTrash /> Delete
-                        </button>
-                      </div>
+                      <button
+                        className="px-3 py-1.5 rounded border text-red-700 hover:bg-red-50"
+                        onClick={() => deleteServer(srv.id)}
+                      >
+                        <FaTrash className="inline -mt-0.5 mr-2" />
+                        Delete
+                      </button>
                     </td>
                   </tr>
 
@@ -247,7 +261,7 @@ export default function ServerManagement() {
   );
 }
 
-// ───────────────────── Expanded Row = Summary + Inline Edit + Variants
+// ───────────────────── Expanded Row (Summary + Quick Edit + Variants)
 function ExpandedRow({ server, onServerSaved }) {
   const [form, setForm] = useState({
     serverName: S(server.serverName),
@@ -265,9 +279,8 @@ function ExpandedRow({ server, onServerSaved }) {
   const [variants, setVariants] = useState([]);
   const [variantsLoading, setVariantsLoading] = useState(true);
 
-  // variant inline editor
   const [variantDraft, setVariantDraft] = useState(defaultVariant("openvpn"));
-  const [editingVariantId, setEditingVariantId] = useState(null); // null = add
+  const [editingVariantId, setEditingVariantId] = useState(null);
 
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -329,12 +342,10 @@ function ExpandedRow({ server, onServerSaved }) {
     setEditingVariantId(v.id);
     setVariantDraft({
       protocol: v.protocol || "openvpn",
-      // openvpn
       port: v.port ?? 1194,
       configFileUrl: v.configFileUrl || "",
       username: v.username || "",
       password: v.password || "",
-      // wireguard
       endpointPort: v.endpointPort ?? 51820,
       publicKey: v.publicKey || "",
       address: v.address || "",
@@ -376,7 +387,7 @@ function ExpandedRow({ server, onServerSaved }) {
         if (!data?.ok) throw new Error(data?.message || "Variant add failed");
       }
       await loadVariants();
-      await onServerSaved?.(); // برای بروزرسانی protocols/variantsCount
+      await onServerSaved?.();
       cancelVariantEdit();
     } catch (e) {
       console.error(e);
@@ -406,13 +417,15 @@ function ExpandedRow({ server, onServerSaved }) {
       : "-";
 
   return (
-    <div className="p-4 border-t bg-white">
-      {/* Summary + Inline Edit */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <div className="p-5 border-t bg-gradient-to-b from-white to-gray-50">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Summary */}
-        <div className="lg:col-span-1">
-          <div className="rounded-xl border p-4 bg-gray-50">
-            <h3 className="font-semibold mb-3">Summary</h3>
+        <div className="xl:col-span-1">
+          <div className="rounded-xl border p-4 bg-white shadow-sm">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-semibold">Summary</h3>
+              <Badge color="slate" text={`ID: ${server.id.slice(0, 6)}…`} />
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-2 text-sm">
               <Info label="Name" value={server.serverName || "-"} />
               <Info label="IP/Host" value={server.ipAddress || server.host || "-"} />
@@ -426,12 +439,30 @@ function ExpandedRow({ server, onServerSaved }) {
           </div>
         </div>
 
-        {/* Inline Edit */}
-        <div className="lg:col-span-2">
-          <div className="rounded-xl border p-4">
-            <div className="flex items-center justify-between mb-3">
+        {/* Quick Edit */}
+        <div className="xl:col-span-2">
+          <div className="rounded-xl border p-4 bg-white shadow-sm">
+            <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold">Quick Edit</h3>
               <div className="flex gap-2">
+                <button
+                  className="px-3 py-2 border rounded flex items-center gap-2"
+                  onClick={() =>
+                    setForm({
+                      serverName: S(server.serverName),
+                      ipAddress: S(server.ipAddress || server.host),
+                      serverType: S(server.serverType || "free"),
+                      location: S(server.location),
+                      country: S(server.country),
+                      status: S(server.status || "active"),
+                      description: S(server.description),
+                      pingMs: server.pingMs ?? "",
+                      maxConnections: server.maxConnections ?? 10,
+                    })
+                  }
+                >
+                  <FaTimes /> Reset
+                </button>
                 <button
                   className="px-3 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"
                   onClick={saveServer}
@@ -477,7 +508,7 @@ function ExpandedRow({ server, onServerSaved }) {
             <div className="mt-3">
               <label className="block mb-1 font-medium">Description</label>
               <textarea
-                className="w-full border px-3 py-2 rounded"
+                className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
                 rows={3}
                 value={form.description}
                 onChange={(e) => change("description", e.target.value)}
@@ -488,8 +519,8 @@ function ExpandedRow({ server, onServerSaved }) {
       </div>
 
       {/* Variants */}
-      <div className="mt-6 rounded-xl border p-4">
-        <div className="flex items-center justify-between">
+      <div className="mt-6 rounded-xl border p-4 bg-white shadow-sm">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <h3 className="font-semibold">Connection Variants</h3>
           <div className="flex gap-2">
             <button
@@ -509,7 +540,7 @@ function ExpandedRow({ server, onServerSaved }) {
           </div>
         </div>
 
-        {/* Inline variant editor */}
+        {/* Inline editor */}
         <div className="mt-3 rounded-lg border p-3 bg-gray-50">
           <VariantEditor
             draft={variantDraft}
@@ -529,9 +560,16 @@ function ExpandedRow({ server, onServerSaved }) {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {variants.map((v) => (
-                <div key={v.id} className="border rounded-lg p-3">
+                <div key={v.id} className="border rounded-lg p-3 hover:shadow-sm transition">
                   <div className="flex items-center justify-between">
-                    <p className="font-medium capitalize">{v.protocol}</p>
+                    <p className="font-semibold capitalize">
+                      {v.protocol}{" "}
+                      {v.protocol === "openvpn" ? (
+                        <Badge color="green" text={`:${v.port ?? "-"}`} />
+                      ) : (
+                        <Badge color="purple" text={`:${v.endpointPort ?? "-"}`} />
+                      )}
+                    </p>
                     <div className="flex items-center gap-2">
                       <button
                         className="px-2 py-1 rounded border text-blue-700 hover:bg-blue-50 flex items-center gap-1"
@@ -550,11 +588,9 @@ function ExpandedRow({ server, onServerSaved }) {
                     </div>
                   </div>
 
-                  {/* details */}
                   <div className="text-sm text-gray-700 space-y-1 mt-2">
                     {v.protocol === "openvpn" && (
                       <>
-                        <p>Port: {v.port ?? "-"}</p>
                         {v.configFileUrl && (
                           <p className="break-all">
                             OVPN:{" "}
@@ -577,7 +613,6 @@ function ExpandedRow({ server, onServerSaved }) {
                     )}
                     {v.protocol === "wireguard" && (
                       <>
-                        <p>Endpoint Port: {v.endpointPort ?? "-"}</p>
                         {v.publicKey && <p className="break-all">Public Key: {v.publicKey}</p>}
                         {v.address && <p>Address: {v.address}</p>}
                         {v.dns && <p>DNS: {v.dns}</p>}
@@ -607,6 +642,25 @@ function Info({ label, value }) {
     </p>
   );
 }
+function Badge({ text, color = "slate", capitalize = false }) {
+  const map = {
+    blue: "bg-blue-100 text-blue-700",
+    amber: "bg-amber-100 text-amber-800",
+    green: "bg-green-100 text-green-700",
+    purple: "bg-purple-100 text-purple-700",
+    red: "bg-red-100 text-red-700",
+    slate: "bg-slate-100 text-slate-700",
+  };
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[color]} ${
+        capitalize ? "capitalize" : ""
+      }`}
+    >
+      {text}
+    </span>
+  );
+}
 function Field({ label, value, onChange, type = "text", placeholder }) {
   return (
     <div>
@@ -616,7 +670,7 @@ function Field({ label, value, onChange, type = "text", placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full border px-3 py-2 rounded"
+        className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
       />
     </div>
   );
@@ -626,7 +680,7 @@ function Select({ label, value, onChange, options }) {
     <div>
       <label className="block mb-1 font-medium">{label}</label>
       <select
-        className="w-full border px-3 py-2 rounded"
+        className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
         value={value}
         onChange={(e) => onChange(e.target.value)}
       >
@@ -640,7 +694,7 @@ function Select({ label, value, onChange, options }) {
   );
 }
 
-// ───────────────────── Variant Editor (inline)
+// ───────────────────── Inline Variant Editor
 function VariantEditor({ draft, setDraft, onCancel, onSave, editingId }) {
   const [saving, setSaving] = useState(false);
   const change = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
@@ -660,7 +714,7 @@ function VariantEditor({ draft, setDraft, onCancel, onSave, editingId }) {
         <div className="flex items-center gap-3">
           <label className="font-medium">Protocol</label>
           <select
-            className="border px-3 py-2 rounded"
+            className="border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
             value={draft.protocol}
             onChange={(e) => change("protocol", e.target.value)}
           >
@@ -712,7 +766,40 @@ function VariantEditor({ draft, setDraft, onCancel, onSave, editingId }) {
   );
 }
 
-// ───────────────────── Variant helpers (هم‌راستا با API)
+// ───────────────────── Skeleton / Empty
+function SkeletonRows() {
+  const Row = () => (
+    <tr className="animate-pulse">
+      {[...Array(10)].map((_, i) => (
+        <td key={i} className="p-4">
+          <div className="h-3 w-full max-w-[140px] rounded bg-gray-200" />
+        </td>
+      ))}
+    </tr>
+  );
+  return (
+    <>
+      <Row />
+      <Row />
+      <Row />
+      <Row />
+      <Row />
+    </>
+  );
+}
+function EmptyState() {
+  return (
+    <div className="mx-auto max-w-md text-center">
+      <div className="mx-auto mb-3 h-12 w-12 rounded-2xl bg-gray-100 flex items-center justify-center text-gray-500">
+        <FaServer />
+      </div>
+      <p className="text-gray-700 font-medium">No servers match your filters</p>
+      <p className="text-gray-500 text-sm">Try clearing search or changing filters.</p>
+    </div>
+  );
+}
+
+// ───────────────────── Variant helpers
 function defaultVariant(proto = "openvpn") {
   if (proto === "wireguard") {
     return {
@@ -725,7 +812,6 @@ function defaultVariant(proto = "openvpn") {
       persistentKeepalive: "",
       mtu: "",
       preSharedKey: "",
-      // openvpn placeholders
       port: "",
       configFileUrl: "",
       username: "",
@@ -738,7 +824,6 @@ function defaultVariant(proto = "openvpn") {
     configFileUrl: "",
     username: "",
     password: "",
-    // wg placeholders
     endpointPort: "",
     publicKey: "",
     address: "",
