@@ -1,4 +1,5 @@
 // /api/servers.js
+export const runtime = "nodejs";
 import { db } from "../lib/firebase-admin.js";
 
 function allowCORS(res) {
@@ -6,70 +7,48 @@ function allowCORS(res) {
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
-
-// کوچک‌ساز امنِ رشته
-const S = (v) => (v == null ? "" : String(v));
+const S = (v) => (v == null ? "" : String(v).trim().toLowerCase());
 
 export default async function handler(req, res) {
   allowCORS(res);
-
   if (req.method === "OPTIONS") return res.status(200).end();
-  if (req.method !== "GET") {
-    return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
-  }
+  if (req.method !== "GET") return res.status(405).json({ ok: false, error: "METHOD_NOT_ALLOWED" });
 
   try {
-    // ---------- Query params ----------
-    const limitRaw    = Array.isArray(req.query.limit)    ? req.query.limit[0]    : req.query.limit;
-    const typeRaw     = Array.isArray(req.query.type)     ? req.query.type[0]     : req.query.type;      // free|premium
-    const protocolRaw = Array.isArray(req.query.protocol) ? req.query.protocol[0] : req.query.protocol;  // openvpn|wireguard
+    const qp = req.query;
+    const typeRaw       = Array.isArray(qp.type) ? qp.type[0] : qp.type;            // free|premium (اختیاری)
+    const protocolRaw   = Array.isArray(qp.protocol) ? qp.protocol[0] : qp.protocol; // openvpn|wireguard (اختیاری)
+    const includeVarRaw = Array.isArray(qp.includeVariants) ? qp.includeVariants[0] : qp.includeVariants;
+    const includeVariants = S(includeVarRaw) === "1" || S(includeVarRaw) === "true";
 
-    let limit = parseInt(limitRaw ?? "100", 10);
-    if (!Number.isFinite(limit) || limit <= 0) limit = 100;
+    let q = db.collection("servers");
+    if (typeRaw) q = q.where("serverType", "==", S(typeRaw));
 
-    const type     = S(typeRaw).trim().toLowerCase();
-    const protocol = S(protocolRaw).trim().toLowerCase(); // اختیاری
+    const snap = await q.get();
 
-    // ---------- Base query ----------
-    // توجه: در مدل جدید، 'servers' شامل فیلدهای خلاصه است (protocols[], variantsCount)
-    let q = db
-      .collection("servers")
-      .where("status", "==", "active");
+    // سرورها (خام) + id
+    let servers = snap.docs.map(d => ({ id: d.id, ...(d.data() || {}) }));
 
-    if (type) {
-      q = q.where("serverType", "==", type);
-    }
-    if (protocol) {
-      // فیلتر با استفاده از فیلد خلاصه‌ی protocols: ["openvpn","wireguard",...]
-      q = q.where("protocols", "array-contains", protocol);
+    // اگر پروتکل خواسته شده، با نگاه به SUMMARY (protocols[]) سریع فیلتر کن
+    if (protocolRaw) {
+      const want = S(protocolRaw);
+      servers = servers.filter(s => Array.isArray(s.protocols) ? s.protocols.includes(want) : true);
     }
 
-    const snap = await q.limit(limit).get();
+    // اگر includeVariants=true، واریانت‌های خام را هم ضمیمه کن
+    if (includeVariants) {
+      const withVars = await Promise.all(servers.map(async s => {
+        const vSnap = await db.collection("servers").doc(s.id).collection("variants").get();
+        const variants = vSnap.docs.map(v => ({ id: v.id, ...(v.data() || {}) }));
+        // اگر protocol مشخص شده بود، اینجا هم فیلتر اعمال کن (بدون تغییر ساختار)
+        const protocol = S(protocolRaw);
+        const filtered = protocol ? variants.filter(v => S(v.protocol) === protocol) : variants;
+        return { ...s, variants: filtered };
+      }));
+      servers = withVars;
+    }
 
-    // ---------- Shape response ----------
-    const servers = snap.docs.map((d) => {
-      const v = d.data() || {};
-      return {
-        id: d.id,
-        // عمومی
-        name: v.serverName ?? "",
-        host: v.ipAddress ?? v.host ?? "",
-        country: v.country ?? "",
-        city: v.location ?? "",
-        type: v.serverType ?? null,              // free | premium
-        // خلاصهٔ واریانت‌ها
-        protocols: Array.isArray(v.protocols) ? v.protocols : [],
-        variantsCount: typeof v.variantsCount === "number" ? v.variantsCount : null,
-        // متریک‌های اختیاری
-        pingMs: v.pingMs ?? null,
-        load: v.load ?? null,
-        // زمان‌ها (اختیاری)
-        createdAt: v.createdAt ?? null,
-        updatedAt: v.updatedAt ?? null,
-      };
-    });
-
-    return res.status(200).json({ ok: true, servers });
+    return res.status(200).json({ ok: true, data: servers, count: servers.length });
   } catch (e) {
     console.error("GET /api/servers error:", e);
     return res.status(500).json({ ok: false, error: "INTERNAL_ERROR" });
