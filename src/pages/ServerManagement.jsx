@@ -1,19 +1,9 @@
 // src/pages/ServerManagement.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  getDocs,
-  addDoc,
-  updateDoc,
-  doc,
-  deleteDoc,
-  writeBatch,
-} from "firebase/firestore";
-import { db } from "../../lib/firebase.js";
+import axios from "axios";
 import { FaServer, FaSyncAlt, FaPlus, FaTrash, FaPen } from "react-icons/fa";
 
-// ─────────────────────────────────────────────────────────────
-// Utilities
+// Utils
 const S = (v) => (v == null ? "" : String(v));
 const toNum = (v, d = undefined) => {
   const n = Number(v);
@@ -28,33 +18,21 @@ export default function ServerManagement() {
   const [selectedServer, setSelectedServer] = useState(null);
   const [editServer, setEditServer] = useState(null);
 
-  // for details view
   const [variants, setVariants] = useState([]);
   const [variantsLoading, setVariantsLoading] = useState(false);
 
-  // Variant modal (add/edit)
   const [variantModalOpen, setVariantModalOpen] = useState(false);
-  const [editingVariant, setEditingVariant] = useState(null); // null = add
+  const [editingVariant, setEditingVariant] = useState(null);
   const [variantDraft, setVariantDraft] = useState(defaultVariant("openvpn"));
 
   const fetchServers = async () => {
     setLoading(true);
     try {
-      const querySnapshot = await getDocs(collection(db, "servers"));
-      const serversList = [];
-      querySnapshot.forEach((docu) => {
-        const data = docu.data() || {};
-        serversList.push({
-          id: docu.id,
-          ...data,
-          protocols: Array.isArray(data.protocols) ? data.protocols : [],
-          variantsCount:
-            typeof data.variantsCount === "number" ? data.variantsCount : 0,
-        });
-      });
-      setServers(serversList);
-    } catch (error) {
-      console.error("Error fetching servers:", error);
+      const { data } = await axios.get("/api/server-management");
+      if (data?.ok) setServers(data.servers || []);
+      else throw new Error(data?.message || "Failed to load servers");
+    } catch (e) {
+      console.error(e);
       alert("Failed to fetch servers.");
     }
     setLoading(false);
@@ -63,12 +41,13 @@ export default function ServerManagement() {
   const fetchVariants = async (serverId) => {
     setVariantsLoading(true);
     try {
-      const snap = await getDocs(collection(db, "servers", serverId, "variants"));
-      const list = [];
-      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
-      setVariants(list);
-    } catch (err) {
-      console.error("fetchVariants error:", err);
+      const { data } = await axios.get("/api/server-management", {
+        params: { serverId },
+      });
+      if (data?.ok) setVariants(data.variants || []);
+      else throw new Error(data?.message || "Failed to load variants");
+    } catch (e) {
+      console.error(e);
       alert("Failed to load variants.");
     }
     setVariantsLoading(false);
@@ -80,93 +59,73 @@ export default function ServerManagement() {
 
   const visibleServers = useMemo(() => servers, [servers]);
 
-  // Delete server + variants
   const handleDeleteServer = async (serverId) => {
-    const confirmDel = window.confirm(
-      "Delete this server and ALL its variants?"
-    );
-    if (!confirmDel) return;
-
+    const ok = window.confirm("Delete this server and ALL its variants?");
+    if (!ok) return;
     try {
-      // 1) delete variants in batch
-      const variantsSnap = await getDocs(
-        collection(db, "servers", serverId, "variants")
-      );
-      const batch = writeBatch(db);
-      variantsSnap.forEach((vDoc) => batch.delete(vDoc.ref));
-      await batch.commit();
-
-      // 2) delete server doc
-      await deleteDoc(doc(db, "servers", serverId));
-
-      // 3) update state
+      const { data } = await axios.delete("/api/server-management", {
+        params: { id: serverId },
+      });
+      if (!data?.ok) throw new Error(data?.message || "Delete failed");
       setServers((prev) => prev.filter((s) => s.id !== serverId));
       if (selectedServer?.id === serverId) setSelectedServer(null);
       if (editServer?.id === serverId) setEditServer(null);
-    } catch (error) {
-      alert("Failed to delete server: " + error.message);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to delete server.");
     }
   };
 
-  // Update base server fields only
   const handleEditServer = async (updatedServer) => {
     try {
-      const ref = doc(db, "servers", updatedServer.id);
-      const {
+      const { id, ...serverData } = updatedServer;
+      const { data } = await axios.put("/api/server-management", {
         id,
-        protocols,
-        variantsCount,
-        createdAt,
-        updatedAt,
-        ...serverData
-      } = updatedServer;
-      await updateDoc(ref, {
         ...serverData,
-        updatedAt: new Date().toISOString(),
       });
+      if (!data?.ok) throw new Error(data?.message || "Update failed");
       setEditServer(null);
-      fetchServers();
-      if (selectedServer?.id === updatedServer.id) {
-        setSelectedServer((s) => ({ ...s, ...serverData }));
+      await fetchServers();
+      if (selectedServer?.id === id) {
+        setSelectedServer((s) => (s ? { ...s, ...serverData } : s));
       }
-    } catch (error) {
-      alert("Failed to update server: " + error.message);
+    } catch (e) {
+      console.error(e);
+      alert("Failed to update server.");
     }
   };
 
-  // Open details (loads variants)
   const openDetails = async (srv) => {
     setSelectedServer(srv);
     setVariants([]);
     await fetchVariants(srv.id);
   };
 
-  // Variant CRUD
   const openAddVariant = (proto = "openvpn") => {
     setEditingVariant(null);
     setVariantDraft(defaultVariant(proto));
     setVariantModalOpen(true);
   };
 
-  const openEditVariant = (variant) => {
-    setEditingVariant(variant);
+  const openEditVariant = (v) => {
+    setEditingVariant(v);
     setVariantDraft({
-      protocol: variant.protocol || "openvpn",
+      protocol: v.protocol || "openvpn",
       // openvpn
-      port: variant.port ?? 1194,
-      configFileUrl: variant.configFileUrl || "",
-      username: variant.username || "",
-      password: variant.password || "",
+      port: v.port ?? 1194,
+      configFileUrl: v.configFileUrl || "",
+      username: v.username || "",
+      password: v.password || "",
       // wireguard
-      endpointPort: variant.endpointPort ?? 51820,
-      publicKey: variant.publicKey || "",
-      address: variant.address || "",
-      dns: variant.dns || "",
-      allowedIps: variant.allowedIps || "",
+      endpointPort: v.endpointPort ?? 51820,
+      publicKey: v.publicKey || "",
+      address: v.address || "",
+      dns: v.dns || "",
+      allowedIps: v.allowedIps || "",
       persistentKeepalive:
-        variant.persistentKeepalive != null ? String(variant.persistentKeepalive) : "",
-      mtu: variant.mtu != null ? String(variant.mtu) : "",
-      preSharedKey: variant.preSharedKey || "",
+        v.persistentKeepalive != null ? String(v.persistentKeepalive) : "",
+      mtu: v.mtu != null ? String(v.mtu) : "",
+      preSharedKey: v.preSharedKey || "",
     });
     setVariantModalOpen(true);
   };
@@ -180,38 +139,38 @@ export default function ServerManagement() {
     if (!selectedServer) return;
     const serverId = selectedServer.id;
 
-    // validate draft
     const errs = validateVariant(variantDraft);
     if (errs.length) {
       alert("Please fix:\n- " + errs.join("\n- "));
       return;
     }
 
-    const colRef = collection(db, "servers", serverId, "variants");
-
-    // normalize payload
-    const payload = normalizeVariant(variantDraft, selectedServer.ipAddress);
-
     try {
       if (editingVariant) {
         // update
-        await updateDoc(doc(colRef, editingVariant.id), {
-          ...payload,
-          updatedAt: new Date().toISOString(),
+        const { data } = await axios.put("/api/server-management", {
+          action: "variant",
+          serverId,
+          variantId: editingVariant.id,
+          variant: variantDraft,
         });
+        if (!data?.ok) throw new Error(data?.message || "Variant update failed");
       } else {
         // add
-        await addDoc(colRef, {
-          ...payload,
-          createdAt: new Date().toISOString(),
+        const { data } = await axios.post("/api/server-management", {
+          action: "variant",
+          serverId,
+          variant: variantDraft,
         });
-        // bump counters on server base (protocols/variantsCount)
-        await refreshServerSummary(serverId);
+        if (!data?.ok) throw new Error(data?.message || "Variant add failed");
       }
       await fetchVariants(serverId);
       closeVariantModal();
-    } catch (err) {
-      console.error("save variant error:", err);
+
+      // اختیاری: تازه‌سازی ردیف سرور برای protocols/variantsCount
+      await fetchServers();
+    } catch (e) {
+      console.error(e);
       alert("Failed to save variant.");
     }
   };
@@ -221,43 +180,15 @@ export default function ServerManagement() {
     const ok = window.confirm("Delete this variant?");
     if (!ok) return;
     try {
-      await deleteDoc(
-        doc(db, "servers", selectedServer.id, "variants", variantId)
-      );
+      const { data } = await axios.delete("/api/server-management", {
+        params: { action: "variant", serverId: selectedServer.id, variantId },
+      });
+      if (!data?.ok) throw new Error(data?.message || "Variant delete failed");
       await fetchVariants(selectedServer.id);
-      await refreshServerSummary(selectedServer.id);
-    } catch (err) {
-      console.error("delete variant error:", err);
+      await fetchServers();
+    } catch (e) {
+      console.error(e);
       alert("Failed to delete variant.");
-    }
-  };
-
-  // after add/delete variants → recompute summary fields on server
-  const refreshServerSummary = async (serverId) => {
-    const snap = await getDocs(
-      collection(db, "servers", serverId, "variants")
-    );
-    const list = [];
-    snap.forEach((d) => list.push(d.data()));
-    const protocols = Array.from(
-      new Set(list.map((v) => S(v.protocol).toLowerCase().trim()).filter(Boolean))
-    );
-    const variantsCount = list.length;
-
-    await updateDoc(doc(db, "servers", serverId), {
-      protocols,
-      variantsCount,
-      updatedAt: new Date().toISOString(),
-    });
-
-    // reflect in local state
-    setServers((prev) =>
-      prev.map((s) =>
-        s.id === serverId ? { ...s, protocols, variantsCount } : s
-      )
-    );
-    if (selectedServer?.id === serverId) {
-      setSelectedServer((s) => (s ? { ...s, protocols, variantsCount } : s));
     }
   };
 
@@ -417,24 +348,43 @@ export default function ServerManagement() {
                               <p>Port: {v.port ?? "-"}</p>
                               {v.configFileUrl && (
                                 <p className="break-all">
-                                  OVPN: <a href={v.configFileUrl} className="text-blue-600 underline" target="_blank" rel="noreferrer">{v.configFileUrl}</a>
+                                  OVPN:{" "}
+                                  <a
+                                    href={v.configFileUrl}
+                                    className="text-blue-600 underline"
+                                    target="_blank"
+                                    rel="noreferrer"
+                                  >
+                                    {v.configFileUrl}
+                                  </a>
                                 </p>
                               )}
                               {(v.username || v.password) && (
-                                <p>User/Pass: {v.username || "-"} / {v.password ? "•••" : "-"}</p>
+                                <p>
+                                  User/Pass: {v.username || "-"} /{" "}
+                                  {v.password ? "•••" : "-"}
+                                </p>
                               )}
                             </div>
                           )}
                           {v.protocol === "wireguard" && (
                             <div className="text-sm text-gray-700 space-y-1">
                               <p>Endpoint Port: {v.endpointPort ?? "-"}</p>
-                              {v.publicKey && <p className="break-all">Public Key: {v.publicKey}</p>}
+                              {v.publicKey && (
+                                <p className="break-all">Public Key: {v.publicKey}</p>
+                              )}
                               {v.address && <p>Address: {v.address}</p>}
                               {v.dns && <p>DNS: {v.dns}</p>}
-                              {v.allowedIps && <p className="break-all">Allowed IPs: {v.allowedIps}</p>}
-                              {v.persistentKeepalive != null && <p>Keepalive: {v.persistentKeepalive}s</p>}
+                              {v.allowedIps && (
+                                <p className="break-all">Allowed IPs: {v.allowedIps}</p>
+                              )}
+                              {v.persistentKeepalive != null && (
+                                <p>Keepalive: {v.persistentKeepalive}s</p>
+                              )}
                               {v.mtu != null && <p>MTU: {v.mtu}</p>}
-                              {v.preSharedKey && <p className="break-all">PSK: {v.preSharedKey}</p>}
+                              {v.preSharedKey && (
+                                <p className="break-all">PSK: {v.preSharedKey}</p>
+                              )}
                             </div>
                           )}
                         </div>
@@ -458,18 +408,18 @@ export default function ServerManagement() {
                 </ul>
               )}
             </div>
-          </div>
 
-          {/* Variant Modal */}
-          {variantModalOpen && (
-            <VariantModal
-              draft={variantDraft}
-              setDraft={setVariantDraft}
-              onClose={closeVariantModal}
-              onSave={handleSaveVariant}
-              editing={!!editingVariant}
-            />
-          )}
+            {/* Variant Modal */}
+            {variantModalOpen && (
+              <VariantModal
+                draft={variantDraft}
+                setDraft={setVariantDraft}
+                onClose={closeVariantModal}
+                onSave={handleSaveVariant}
+                editing={!!editingVariant}
+              />
+            )}
+          </div>
         </div>
       )}
 
@@ -485,8 +435,7 @@ export default function ServerManagement() {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Components
+// ───────────── Components
 
 function ServerSummaryCard({ server }) {
   const protocols =
@@ -536,7 +485,6 @@ function EditServerModal({ server, onCancel, onSave }) {
   const change = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const submit = async () => {
-    // basic validation
     if (!form.serverName || !form.ipAddress) {
       alert("Name and IP/Host are required.");
       return;
@@ -591,12 +539,7 @@ function EditServerModal({ server, onCancel, onSave }) {
               { value: "inactive", label: "Inactive" },
             ]}
           />
-          <Field
-            label="Ping (ms)"
-            type="number"
-            value={form.pingMs}
-            onChange={(v) => change("pingMs", v)}
-          />
+          <Field label="Ping (ms)" type="number" value={form.pingMs} onChange={(v) => change("pingMs", v)} />
           <Field
             label="Max Connections"
             type="number"
@@ -634,7 +577,6 @@ function EditServerModal({ server, onCancel, onSave }) {
 
 function VariantModal({ draft, setDraft, onClose, onSave, editing }) {
   const [saving, setSaving] = useState(false);
-
   const change = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
   const submit = async () => {
@@ -670,79 +612,28 @@ function VariantModal({ draft, setDraft, onClose, onSave, editing }) {
 
         {draft.protocol === "openvpn" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="Port *"
-              type="number"
-              value={draft.port}
-              onChange={(v) => change("port", v)}
-            />
+            <Field label="Port *" type="number" value={draft.port} onChange={(v) => change("port", v)} />
             <Field
               label="Config file URL (optional)"
               value={draft.configFileUrl}
               onChange={(v) => change("configFileUrl", v)}
               placeholder="https://.../server.ovpn"
             />
-            <Field
-              label="Username (optional)"
-              value={draft.username}
-              onChange={(v) => change("username", v)}
-            />
-            <Field
-              label="Password (optional)"
-              value={draft.password}
-              onChange={(v) => change("password", v)}
-            />
+            <Field label="Username (optional)" value={draft.username} onChange={(v) => change("username", v)} />
+            <Field label="Password (optional)" value={draft.password} onChange={(v) => change("password", v)} />
           </div>
         )}
 
         {draft.protocol === "wireguard" && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field
-              label="Endpoint Port *"
-              type="number"
-              value={draft.endpointPort}
-              onChange={(v) => change("endpointPort", v)}
-            />
-            <Field
-              label="Server Public Key (base64, optional)"
-              value={draft.publicKey}
-              onChange={(v) => change("publicKey", v)}
-            />
-            <Field
-              label="Client Address (optional)"
-              value={draft.address}
-              onChange={(v) => change("address", v)}
-              placeholder="10.7.0.2/32"
-            />
-            <Field
-              label="DNS (optional)"
-              value={draft.dns}
-              onChange={(v) => change("dns", v)}
-              placeholder="1.1.1.1"
-            />
-            <Field
-              label="Allowed IPs (optional)"
-              value={draft.allowedIps}
-              onChange={(v) => change("allowedIps", v)}
-              placeholder="0.0.0.0/0, ::/0"
-            />
-            <Field
-              label="Persistent Keepalive (sec, optional)"
-              value={draft.persistentKeepalive}
-              onChange={(v) => change("persistentKeepalive", v)}
-              placeholder="25"
-            />
-            <Field
-              label="MTU (optional)"
-              value={draft.mtu}
-              onChange={(v) => change("mtu", v)}
-              placeholder="1420"
-            />
-            <Field
-              label="Pre-shared Key (optional)"
-              value={draft.preSharedKey}
-              onChange={(v) => change("preSharedKey", v)}
-            />
+            <Field label="Endpoint Port *" type="number" value={draft.endpointPort} onChange={(v) => change("endpointPort", v)} />
+            <Field label="Server Public Key (base64, optional)" value={draft.publicKey} onChange={(v) => change("publicKey", v)} />
+            <Field label="Client Address (optional)" value={draft.address} onChange={(v) => change("address", v)} placeholder="10.7.0.2/32" />
+            <Field label="DNS (optional)" value={draft.dns} onChange={(v) => change("dns", v)} placeholder="1.1.1.1" />
+            <Field label="Allowed IPs (optional)" value={draft.allowedIps} onChange={(v) => change("allowedIps", v)} placeholder="0.0.0.0/0, ::/0" />
+            <Field label="Persistent Keepalive (sec, optional)" value={draft.persistentKeepalive} onChange={(v) => change("persistentKeepalive", v)} placeholder="25" />
+            <Field label="MTU (optional)" value={draft.mtu} onChange={(v) => change("mtu", v)} placeholder="1420" />
+            <Field label="Pre-shared Key (optional)" value={draft.preSharedKey} onChange={(v) => change("preSharedKey", v)} />
           </div>
         )}
 
@@ -763,6 +654,7 @@ function VariantModal({ draft, setDraft, onClose, onSave, editing }) {
   );
 }
 
+// Small inputs
 function Field({ label, value, onChange, type = "text", placeholder }) {
   return (
     <div>
@@ -777,7 +669,6 @@ function Field({ label, value, onChange, type = "text", placeholder }) {
     </div>
   );
 }
-
 function Select({ label, value, onChange, options }) {
   return (
     <div>
@@ -797,9 +688,7 @@ function Select({ label, value, onChange, options }) {
   );
 }
 
-// ─────────────────────────────────────────────────────────────
-// Variant helpers
-
+// Defaults + validation (same shape as API)
 function defaultVariant(proto = "openvpn") {
   if (proto === "wireguard") {
     return {
@@ -812,7 +701,7 @@ function defaultVariant(proto = "openvpn") {
       persistentKeepalive: "",
       mtu: "",
       preSharedKey: "",
-      // openvpn placeholders (unused)
+      // openvpn placeholders
       port: "",
       configFileUrl: "",
       username: "",
@@ -836,7 +725,6 @@ function defaultVariant(proto = "openvpn") {
     preSharedKey: "",
   };
 }
-
 function validateVariant(v) {
   const errs = [];
   if (!["openvpn", "wireguard"].includes(v.protocol)) {
@@ -865,31 +753,9 @@ function validateVariant(v) {
     if (v.mtu && !Number.isFinite(toNum(v.mtu))) {
       errs.push("wireguard.mtu must be number");
     }
-    // allowedIps/address/dns/psk اختیاری هستن—validate ساده نگه می‌داریم
+
   }
   return errs;
 }
 
-function normalizeVariant(v, ipAddress) {
-  const out = {
-    protocol: v.protocol,
-    meta: { host: ipAddress },
-  };
-  if (v.protocol === "openvpn") {
-    out.port = toNum(v.port, 1194);
-    if (v.configFileUrl) out.configFileUrl = S(v.configFileUrl).trim();
-    if (v.username) out.username = S(v.username).trim();
-    if (v.password) out.password = S(v.password).trim();
-  }
-  if (v.protocol === "wireguard") {
-    out.endpointPort = toNum(v.endpointPort, 51820);
-    if (v.publicKey) out.publicKey = S(v.publicKey).trim();
-    if (v.address) out.address = S(v.address).trim();
-    if (v.dns) out.dns = S(v.dns).trim();
-    if (v.allowedIps) out.allowedIps = S(v.allowedIps).trim();
-    if (v.persistentKeepalive) out.persistentKeepalive = toNum(v.persistentKeepalive);
-    if (v.mtu) out.mtu = toNum(v.mtu);
-    if (v.preSharedKey) out.preSharedKey = S(v.preSharedKey).trim();
-  }
-  return out;
-}
+
