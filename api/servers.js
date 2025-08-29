@@ -20,34 +20,29 @@ export default async function handler(req, res) {
     const typeRaw  = Array.isArray(req.query.type)  ? req.query.type[0]  : req.query.type;
 
     let limit = parseInt(limitRaw ?? "100", 10);
-    if (!Number.isFinite(limit) || limit <= 0 || limit > 1000) limit = 100;
+    if (!Number.isFinite(limit) || limit <= 0) limit = 100;
 
-    const type = (typeRaw || "").toString().trim().toLowerCase(); // "free" | "premium" | ""
+    const type = String(typeRaw || "").trim().toLowerCase(); // free | premium | ""
 
-    // ✅ فقط سرورهای active با پروتکل v2ray
     let q = db.collection("servers")
       .where("status", "==", "active")
-      .where("protocol", "==", "v2ray");
+      .where("protocol", "==", "openvpn");
 
-    if (type === "free" || type === "premium") {
-      q = q.where("serverType", "==", type);
-    }
+    if (type) q = q.where("serverType", "==", type);
 
-    q = q.limit(limit);
-
-    const snap = await q.get();
+    const snap = await q.limit(limit).get();
 
     const servers = snap.docs.map((d) => {
       const v = d.data() || {};
       return {
         id: d.id,
         name: v.serverName ?? "",
-        host: v.ipAddress ?? "",
-        port: Number(v.port) || null,
+        host: v.ipAddress ?? v.host ?? "",
+        port: v.port ?? null,
         country: v.country ?? "",
         city: v.location ?? "",
         type: v.serverType ?? null,      // free | premium
-        protocol: v.protocol ?? "v2ray",
+        protocol: "openvpn",
         pingMs: v.pingMs ?? null,
         load: v.load ?? null,
       };
