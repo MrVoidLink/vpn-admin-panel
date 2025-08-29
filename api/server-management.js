@@ -23,7 +23,13 @@ function validateVariant(v) {
   if (!["openvpn", "wireguard"].includes(v.protocol)) {
     errs.push("protocol must be openvpn or wireguard");
   }
+
   if (v.protocol === "openvpn") {
+    // NEW: ovpnProto (udp|tcp)
+    const ovpn = S(v.ovpnProto || "udp").toLowerCase();
+    if (!["udp", "tcp"].includes(ovpn)) {
+      errs.push("openvpn.ovpnProto must be udp or tcp");
+    }
     const port = toNum(v.port);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       errs.push("openvpn.port is invalid");
@@ -32,7 +38,9 @@ function validateVariant(v) {
       errs.push("openvpn.configFileUrl must be http(s)");
     }
   }
+
   if (v.protocol === "wireguard") {
+    // NEW: endpointHost اختیاری است (ولیدیشن سختگیرانه لازم نیست)
     const port = toNum(v.endpointPort);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       errs.push("wireguard.endpointPort is invalid");
@@ -55,12 +63,17 @@ function normalizeVariant(v, ipAddress) {
     protocol: v.protocol,                // "openvpn" | "wireguard"
     meta: { host: S(ipAddress).trim() }, // برای کلاینت
   };
+
   if (v.protocol === "openvpn") {
+    // NEW: ovpnProto
+    out.ovpnProto = S(v.ovpnProto || "udp").toLowerCase();
     out.port = toNum(v.port, 1194);
     if (v.configFileUrl) out.configFileUrl = S(v.configFileUrl).trim();
     if (v.username) out.username = S(v.username).trim();
     if (v.password) out.password = S(v.password).trim();
   } else {
+    // NEW: endpointHost با fallback به ipAddress
+    out.endpointHost = S(v.endpointHost) || S(ipAddress).trim();
     out.endpointPort = toNum(v.endpointPort, 51820);
     if (v.publicKey) out.publicKey = S(v.publicKey).trim();
     if (v.address) out.address = S(v.address).trim();
@@ -107,6 +120,34 @@ export default async function handler(req, res) {
     const serverId = S(q.serverId).trim();
     const variantId = S(q.variantId).trim();
 
+    // NEW ────────── GET ONE SERVER (for row refresh)
+    if (method === "GET" && action === "one") {
+      const id = S(q.id).trim();
+      if (!id) return res.status(400).json({ ok: false, message: "MISSING_ID" });
+      const doc = await db.collection("servers").doc(id).get();
+      if (!doc.exists) return res.status(404).json({ ok: false, message: "NOT_FOUND" });
+      const v = doc.data() || {};
+      return res.status(200).json({
+        ok: true,
+        server: {
+          id: doc.id,
+          serverName: v.serverName ?? "",
+          ipAddress: v.ipAddress ?? v.host ?? "",
+          serverType: v.serverType ?? "free",
+          location: v.location ?? "",
+          country: v.country ?? "",
+          status: v.status ?? "active",
+          description: v.description ?? "",
+          pingMs: v.pingMs ?? null,
+          maxConnections: v.maxConnections ?? null,
+          protocols: Array.isArray(v.protocols) ? v.protocols : [],
+          variantsCount: typeof v.variantsCount === "number" ? v.variantsCount : 0,
+          createdAt: v.createdAt ?? null,
+          updatedAt: v.updatedAt ?? null,
+        },
+      });
+    }
+
     // ───────────── LIST SERVERS
     if (method === "GET" && !serverId) {
       const snap = await db.collection("servers").get();
@@ -145,6 +186,11 @@ export default async function handler(req, res) {
       const id = S(body.id).trim();
       if (!id) return res.status(400).json({ ok: false, message: "MISSING_ID" });
 
+      // قبل از آپدیت، IP قبلی را برای sync بعدی نگه می‌داریم
+      const prevDoc = await db.collection("servers").doc(id).get();
+      const prev = prevDoc.exists ? (prevDoc.data() || {}) : {};
+      const prevIp = prev.ipAddress || prev.host || null;
+
       const payload = {
         serverName: S(body.serverName).trim(),
         ipAddress: S(body.ipAddress || body.host).trim(),
@@ -166,6 +212,25 @@ export default async function handler(req, res) {
         ...payload,
         updatedAt: new Date().toISOString(),
       });
+
+      // NEW: اگر IP/Host تغییر کرد، meta.host واریانت‌ها را sync کن
+      const newIp = payload.ipAddress || null;
+      if (newIp && newIp !== prevIp) {
+        const vs = await db.collection("servers").doc(id).collection("variants").get();
+        const b = db.batch();
+        vs.forEach((d) => {
+          const v = d.data() || {};
+          const curHost = v?.meta?.host;
+          if (curHost !== newIp) {
+            b.update(d.ref, {
+              meta: { host: newIp },
+              updatedAt: new Date().toISOString(),
+            });
+          }
+        });
+        await b.commit();
+      }
+
       return res.status(200).json({ ok: true });
     }
 

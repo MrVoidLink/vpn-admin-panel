@@ -342,10 +342,15 @@ function ExpandedRow({ server, onServerSaved }) {
     setEditingVariantId(v.id);
     setVariantDraft({
       protocol: v.protocol || "openvpn",
+      // NEW
+      ovpnProto: v.ovpnProto || "udp",
+      endpointHost: v.endpointHost || "",
+      // OpenVPN
       port: v.port ?? 1194,
       configFileUrl: v.configFileUrl || "",
       username: v.username || "",
       password: v.password || "",
+      // WireGuard
       endpointPort: v.endpointPort ?? 51820,
       publicKey: v.publicKey || "",
       address: v.address || "",
@@ -565,7 +570,7 @@ function ExpandedRow({ server, onServerSaved }) {
                     <p className="font-semibold capitalize">
                       {v.protocol}{" "}
                       {v.protocol === "openvpn" ? (
-                        <Badge color="green" text={`:${v.port ?? "-"}`} />
+                        <Badge color="green" text={`${(v.ovpnProto || "udp").toUpperCase()}:${v.port ?? "-"}`} />
                       ) : (
                         <Badge color="purple" text={`:${v.endpointPort ?? "-"}`} />
                       )}
@@ -613,6 +618,7 @@ function ExpandedRow({ server, onServerSaved }) {
                     )}
                     {v.protocol === "wireguard" && (
                       <>
+                        {v.endpointHost && <p className="break-all">Endpoint Host: {v.endpointHost}</p>}
                         {v.publicKey && <p className="break-all">Public Key: {v.publicKey}</p>}
                         {v.address && <p>Address: {v.address}</p>}
                         {v.dns && <p>DNS: {v.dns}</p>}
@@ -661,7 +667,7 @@ function Badge({ text, color = "slate", capitalize = false }) {
     </span>
   );
 }
-function Field({ label, value, onChange, type = "text", placeholder }) {
+function Field({ label, value, onChange, type = "text", placeholder, error }) {
   return (
     <div>
       <label className="block mb-1 font-medium">{label}</label>
@@ -670,8 +676,11 @@ function Field({ label, value, onChange, type = "text", placeholder }) {
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+        className={`w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200 ${
+          error ? "border-red-500" : "border-gray-300"
+        }`}
       />
+      {error && <p className="text-red-600 text-xs mt-1">{error}</p>}
     </div>
   );
 }
@@ -738,6 +747,19 @@ function VariantEditor({ draft, setDraft, onCancel, onSave, editingId }) {
 
       {draft.protocol === "openvpn" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* NEW: Transport */}
+          <div>
+            <label className="block mb-1 font-medium">Transport *</label>
+            <select
+              className="w-full border px-3 py-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-200"
+              value={draft.ovpnProto || "udp"}
+              onChange={(e) => change("ovpnProto", e.target.value)}
+            >
+              <option value="udp">UDP</option>
+              <option value="tcp">TCP</option>
+            </select>
+          </div>
+
           <Field label="Port *" type="number" value={draft.port} onChange={(v) => change("port", v)} />
           <Field
             label="Config file URL (optional)"
@@ -752,6 +774,13 @@ function VariantEditor({ draft, setDraft, onCancel, onSave, editingId }) {
 
       {draft.protocol === "wireguard" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* NEW: Endpoint Host */}
+          <Field
+            label="Endpoint Host (optional)"
+            value={draft.endpointHost || ""}
+            onChange={(v) => change("endpointHost", v)}
+            placeholder="defaults to server IP/host"
+          />
           <Field label="Endpoint Port *" type="number" value={draft.endpointPort} onChange={(v) => change("endpointPort", v)} />
           <Field label="Server Public Key (base64, optional)" value={draft.publicKey} onChange={(v) => change("publicKey", v)} />
           <Field label="Client Address (optional)" value={draft.address} onChange={(v) => change("address", v)} placeholder="10.7.0.2/32" />
@@ -804,6 +833,8 @@ function defaultVariant(proto = "openvpn") {
   if (proto === "wireguard") {
     return {
       protocol: "wireguard",
+      // NEW
+      endpointHost: "",
       endpointPort: 51820,
       publicKey: "",
       address: "",
@@ -812,6 +843,8 @@ function defaultVariant(proto = "openvpn") {
       persistentKeepalive: "",
       mtu: "",
       preSharedKey: "",
+      // keep OpenVPN placeholders empty
+      ovpnProto: "",
       port: "",
       configFileUrl: "",
       username: "",
@@ -820,10 +853,14 @@ function defaultVariant(proto = "openvpn") {
   }
   return {
     protocol: "openvpn",
+    // NEW
+    ovpnProto: "udp",
     port: 1194,
     configFileUrl: "",
     username: "",
     password: "",
+    // keep WireGuard placeholders empty
+    endpointHost: "",
     endpointPort: "",
     publicKey: "",
     address: "",
@@ -834,12 +871,17 @@ function defaultVariant(proto = "openvpn") {
     preSharedKey: "",
   };
 }
+
 function validateVariant(v) {
   const errs = [];
   if (!["openvpn", "wireguard"].includes(v.protocol)) {
     errs.push("protocol must be openvpn or wireguard");
   }
   if (v.protocol === "openvpn") {
+    const proto = String(v.ovpnProto || "udp").toLowerCase();
+    if (!["udp", "tcp"].includes(proto)) {
+      errs.push("openvpn.ovpnProto must be udp or tcp");
+    }
     const port = toNum(v.port);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       errs.push("openvpn.port is invalid");
