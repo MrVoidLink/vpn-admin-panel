@@ -95,6 +95,10 @@ export default async function handler(req, res) {
           if (raw.mtu != null && !Number.isFinite(toNum(raw.mtu))) {
             vErr.push(`variants[${idx}].mtu`);
           }
+          // NEW: confFileUrl (اختیاری، ولی اگر بود باید http(s) باشد)
+          if (raw.confFileUrl && !isHttpUrl(raw.confFileUrl)) {
+            vErr.push(`variants[${idx}].confFileUrl`);
+          }
           // address/dns/allowedIps/preSharedKey اختیاری‌اند
         }
 
@@ -154,18 +158,19 @@ export default async function handler(req, res) {
 
       if (protocol === "wireguard") {
         const vDoc = variantsCol.doc();
-        const endpointHost = S(raw.endpointHost) || ipAddress; // NEW (fallback)
+        const endpointHost = S(raw.endpointHost) || ipAddress; // fallback
         batch.set(vDoc, {
           protocol: "wireguard",
-          endpointHost,                                       // NEW
+          endpointHost,
           endpointPort: toNum(raw.endpointPort, 51820),
-          ...(raw.publicKey ?           { publicKey:           S(raw.publicKey)           } : {}),
-          ...(raw.address ?             { address:             S(raw.address)             } : {}),
-          ...(raw.dns ?                 { dns:                 S(raw.dns)                 } : {}),
-          ...(raw.allowedIps ?          { allowedIps:          S(raw.allowedIps)          } : {}),
+          ...(raw.confFileUrl ?        { confFileUrl:        S(raw.confFileUrl)        } : {}), // NEW
+          ...(raw.publicKey ?          { publicKey:          S(raw.publicKey)          } : {}),
+          ...(raw.address ?            { address:            S(raw.address)            } : {}),
+          ...(raw.dns ?                { dns:                S(raw.dns)                } : {}),
+          ...(raw.allowedIps ?         { allowedIps:         S(raw.allowedIps)         } : {}),
           ...(raw.persistentKeepalive != null ? { persistentKeepalive: toNum(raw.persistentKeepalive) } : {}),
-          ...(raw.mtu != null ?         { mtu:                 toNum(raw.mtu)             } : {}),
-          ...(raw.preSharedKey ?        { preSharedKey:        S(raw.preSharedKey)        } : {}),
+          ...(raw.mtu != null ?        { mtu:                toNum(raw.mtu)            } : {}),
+          ...(raw.preSharedKey ?       { preSharedKey:       S(raw.preSharedKey)       } : {}),
           meta: { host: ipAddress },
           createdAt: new Date().toISOString(),
         });

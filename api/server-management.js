@@ -25,7 +25,7 @@ function validateVariant(v) {
   }
 
   if (v.protocol === "openvpn") {
-    // NEW: ovpnProto (udp|tcp)
+    // ovpnProto (udp|tcp)
     const ovpn = S(v.ovpnProto || "udp").toLowerCase();
     if (!["udp", "tcp"].includes(ovpn)) {
       errs.push("openvpn.ovpnProto must be udp or tcp");
@@ -40,7 +40,7 @@ function validateVariant(v) {
   }
 
   if (v.protocol === "wireguard") {
-    // NEW: endpointHost اختیاری است (ولیدیشن سختگیرانه لازم نیست)
+    // endpointHost اختیاری است
     const port = toNum(v.endpointPort);
     if (!Number.isFinite(port) || port < 1 || port > 65535) {
       errs.push("wireguard.endpointPort is invalid");
@@ -54,6 +54,10 @@ function validateVariant(v) {
     if (v.mtu && !Number.isFinite(toNum(v.mtu))) {
       errs.push("wireguard.mtu must be number");
     }
+    // NEW: confFileUrl (optional) must be http(s) if provided
+    if (v.confFileUrl && !isHttpUrl(v.confFileUrl)) {
+      errs.push("wireguard.confFileUrl must be http(s)");
+    }
   }
   return errs;
 }
@@ -65,16 +69,18 @@ function normalizeVariant(v, ipAddress) {
   };
 
   if (v.protocol === "openvpn") {
-    // NEW: ovpnProto
+    // ovpnProto
     out.ovpnProto = S(v.ovpnProto || "udp").toLowerCase();
     out.port = toNum(v.port, 1194);
     if (v.configFileUrl) out.configFileUrl = S(v.configFileUrl).trim();
     if (v.username) out.username = S(v.username).trim();
     if (v.password) out.password = S(v.password).trim();
   } else {
-    // NEW: endpointHost با fallback به ipAddress
+    // endpointHost با fallback به ipAddress
     out.endpointHost = S(v.endpointHost) || S(ipAddress).trim();
     out.endpointPort = toNum(v.endpointPort, 51820);
+    // NEW: WireGuard conf file URL
+    if (v.confFileUrl) out.confFileUrl = S(v.confFileUrl).trim();
     if (v.publicKey) out.publicKey = S(v.publicKey).trim();
     if (v.address) out.address = S(v.address).trim();
     if (v.dns) out.dns = S(v.dns).trim();
@@ -120,7 +126,7 @@ export default async function handler(req, res) {
     const serverId = S(q.serverId).trim();
     const variantId = S(q.variantId).trim();
 
-    // NEW ────────── GET ONE SERVER (for row refresh)
+    // GET ONE SERVER (for row refresh)
     if (method === "GET" && action === "one") {
       const id = S(q.id).trim();
       if (!id) return res.status(400).json({ ok: false, message: "MISSING_ID" });
@@ -148,7 +154,7 @@ export default async function handler(req, res) {
       });
     }
 
-    // ───────────── LIST SERVERS
+    // LIST SERVERS
     if (method === "GET" && !serverId) {
       const snap = await db.collection("servers").get();
       const servers = snap.docs.map((d) => {
@@ -173,20 +179,20 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, servers });
     }
 
-    // ───────────── LIST VARIANTS
+    // LIST VARIANTS
     if (method === "GET" && serverId) {
       const vs = await db.collection("servers").doc(serverId).collection("variants").get();
-      const variants = vs.docs.map((d) => ({ id: d.id, ...d.data() }));
+      const variants = vs.docs.map((d) => ({ id: d.id, ...d.data() })); // شامل confFileUrl در WG اگر باشد
       return res.status(200).json({ ok: true, variants });
     }
 
-    // ───────────── UPDATE SERVER
+    // UPDATE SERVER
     if (method === "PUT" && action !== "variant") {
       const body = req.body || {};
       const id = S(body.id).trim();
       if (!id) return res.status(400).json({ ok: false, message: "MISSING_ID" });
 
-      // قبل از آپدیت، IP قبلی را برای sync بعدی نگه می‌داریم
+      // IP قبلی برای sync
       const prevDoc = await db.collection("servers").doc(id).get();
       const prev = prevDoc.exists ? (prevDoc.data() || {}) : {};
       const prevIp = prev.ipAddress || prev.host || null;
@@ -203,7 +209,7 @@ export default async function handler(req, res) {
       if (body.maxConnections != null) payload.maxConnections = toNum(body.maxConnections, 10);
       if (body.pingMs !== "" && body.pingMs != null) payload.pingMs = toNum(body.pingMs);
 
-      // حذف فیلدهای خالی برای تمیز موندن
+      // حذف فیلدهای خالی
       Object.keys(payload).forEach((k) => {
         if (payload[k] === "" || payload[k] == null) delete payload[k];
       });
@@ -213,7 +219,7 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
       });
 
-      // NEW: اگر IP/Host تغییر کرد، meta.host واریانت‌ها را sync کن
+      // اگر IP/Host تغییر کرد، meta.host واریانت‌ها را sync کن
       const newIp = payload.ipAddress || null;
       if (newIp && newIp !== prevIp) {
         const vs = await db.collection("servers").doc(id).collection("variants").get();
@@ -234,12 +240,11 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // ───────────── DELETE SERVER (+ all variants)
+    // DELETE SERVER (+ all variants)
     if (method === "DELETE" && action !== "variant") {
       const id = S(q.id || (req.body && req.body.id)).trim();
       if (!id) return res.status(400).json({ ok: false, message: "MISSING_ID" });
 
-      // delete variants in batch
       const vSnap = await db.collection("servers").doc(id).collection("variants").get();
       const batch = db.batch();
       vSnap.forEach((d) => batch.delete(d.ref));
@@ -249,7 +254,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true });
     }
 
-    // ───────────── ADD VARIANT
+    // ADD VARIANT
     if (method === "POST" && action === "variant") {
       const body = req.body || {};
       const sId = S(body.serverId || serverId).trim();
@@ -275,7 +280,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, id: ref.id, summary });
     }
 
-    // ───────────── UPDATE VARIANT
+    // UPDATE VARIANT
     if (method === "PUT" && action === "variant") {
       const body = req.body || {};
       const sId = S(body.serverId || serverId).trim();
@@ -304,7 +309,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ ok: true, summary });
     }
 
-    // ───────────── DELETE VARIANT
+    // DELETE VARIANT
     if (method === "DELETE" && action === "variant") {
       const sId = S(q.serverId).trim();
       const vId = S(q.variantId).trim();

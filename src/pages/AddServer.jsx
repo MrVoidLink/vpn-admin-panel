@@ -36,6 +36,8 @@ const AddServer = ({ onCancel }) => {
       persistentKeepalive: "",
       mtu: "",
       preSharedKey: "",
+      // NEW (WireGuard file)
+      confFileUrl: "",
     },
   ]);
 
@@ -90,6 +92,10 @@ const AddServer = ({ onCancel }) => {
       if (v.mtu && isNaN(Number(v.mtu))) {
         e[`variants.${idx}.mtu`] = "Number";
       }
+      // NEW: WireGuard conf URL
+      if (v.confFileUrl && !isHttpUrl(v.confFileUrl)) {
+        e[`variants.${idx}.confFileUrl`] = "Conf URL must be http(s)";
+      }
     }
 
     return e;
@@ -137,6 +143,7 @@ const AddServer = ({ onCancel }) => {
             persistentKeepalive: "",
             mtu: "",
             preSharedKey: "",
+            confFileUrl: "",
           }
         : {
             protocol: "wireguard",
@@ -154,6 +161,8 @@ const AddServer = ({ onCancel }) => {
             persistentKeepalive: "",
             mtu: "",
             preSharedKey: "",
+            // NEW
+            confFileUrl: "",
           },
     ]);
   };
@@ -190,6 +199,8 @@ const AddServer = ({ onCancel }) => {
             persistentKeepalive: "",
             mtu: "",
             preSharedKey: "",
+            // نگه‌داشتن confFileUrl برای WG؟ اینجا پاک می‌کنیم چون دیگه WG نیست
+            confFileUrl: "",
           };
         } else {
           return {
@@ -202,6 +213,8 @@ const AddServer = ({ onCancel }) => {
             configFileUrl: "",
             username: "",
             password: "",
+            // NEW: آماده‌سازی confFileUrl
+            confFileUrl: v.confFileUrl || "",
           };
         }
       })
@@ -239,6 +252,7 @@ const AddServer = ({ onCancel }) => {
       persistentKeepalive: "",
       mtu: "",
       preSharedKey: "",
+      confFileUrl: "",
     }]);
     setErrors({});
   };
@@ -271,6 +285,8 @@ const AddServer = ({ onCancel }) => {
           if (v.persistentKeepalive) out.persistentKeepalive = Number(v.persistentKeepalive);
           if (v.mtu) out.mtu = Number(v.mtu);
           if (v.preSharedKey) out.preSharedKey = v.preSharedKey.trim();
+          // NEW: WG conf URL
+          if (v.confFileUrl) out.confFileUrl = v.confFileUrl.trim();
         }
 
         return out;
@@ -454,6 +470,15 @@ const AddServer = ({ onCancel }) => {
                   value={v.endpointPort ?? ""}
                   onChange={(val) => patchVariant(idx, { endpointPort: Number(val) })}
                   error={errors[`variants.${idx}.endpointPort`]}
+                  disabled={loading}
+                />
+                {/* NEW: WireGuard conf file URL */}
+                <Field
+                  label="Config file URL (.conf, optional)"
+                  value={v.confFileUrl || ""}
+                  onChange={(val) => patchVariant(idx, { confFileUrl: val })}
+                  error={errors[`variants.${idx}.confFileUrl`]}
+                  placeholder="https://.../client.conf"
                   disabled={loading}
                 />
                 <Field
